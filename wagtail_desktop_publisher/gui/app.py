@@ -146,7 +146,8 @@ async def build_index():
 
             def worker():
                 try:
-                    engine = SyncEngine(st.api, st.cfg.get("site", ""))
+                    engine = SyncEngine(st.api, st.cfg.get("site", ""),
+                        page_type=st.cfg.get("page_type", PAGE_TYPE))
                     res = engine.sync(
                         st.article_path,
                         parent_id=st.parent_id,

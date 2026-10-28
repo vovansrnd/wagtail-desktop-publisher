@@ -28,7 +28,8 @@ def _engine(cfg):
         raise SyncError(
             "Нет конфигурации: запусти `wagtail-publisher init --url <API URL> --token <token>`"
         )
-    return SyncEngine(WagtailAPI(api_url, token), cfg.get("site", ""))
+    return SyncEngine(WagtailAPI(api_url, token), cfg.get("site", ""),
+                      page_type=cfg.get("page_type", PAGE_TYPE))
 
 
 def _iter_md(target):
@@ -59,6 +60,12 @@ def cmd_publish(args):
     for md in _iter_md(args.target):
         try:
             res = engine.sync(
+                md,
+                parent_id=parent,
+                publish=args.publish,
+                year=args.year,
+                force=args.force,
+            ) if not args.type else engine.sync(
                 md,
                 parent_id=parent,
                 publish=args.publish,
@@ -136,6 +143,7 @@ def main(argv=None):
     p_pub.add_argument("--publish", action="store_true", help="опубликовать (иначе черновик)")
     p_pub.add_argument("--year", help="директория картинок (год)")
     p_pub.add_argument("--force", action="store_true", help="отправить даже без изменений")
+    p_pub.add_argument("--type", help="тип страницы (по умолч. blog.BlogPage)")
     p_pub.add_argument("--json", action="store_true", help="вывести JSON-отчёт")
     p_pub.set_defaults(func=cmd_publish)
 
