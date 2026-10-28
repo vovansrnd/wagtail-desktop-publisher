@@ -1,0 +1,63 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Wagtail Desktop Publisher"
+msgstr "Wagtail Desktop Publisher"
+
+msgid "Connect"
+msgstr "Conectar"
+
+msgid "API URL"
+msgstr "URL da API"
+
+msgid "Token"
+msgstr "Token"
+
+msgid "Connected sites"
+msgstr "Sites conectados"
+
+msgid "Article file (.md)"
+msgstr "Arquivo do artigo (.md)"
+
+msgid "Path to the article"
+msgstr "Caminho do artigo"
+
+msgid "Title"
+msgstr "Título"
+
+msgid "Slug (URL)"
+msgstr "Slug (URL)"
+
+msgid "Year"
+msgstr "Ano"
+
+msgid "Publish immediately (otherwise save as draft)"
+msgstr "Publicar imediatamente (senão salvar como rascunho)"
+
+msgid "Sync article to Wagtail"
+msgstr "Sincronizar artigo com o Wagtail"
+
+msgid "Images"
+msgstr "Imagens"
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "Site"
+msgstr "Site"
+
+msgid "Section"
+msgstr "Seção"
+
+msgid "Scan"
+msgstr "Verificar"
+
+msgid "Connection error"
+msgstr "Erro de conexão"
+
+msgid "Article synced successfully"
+msgstr "Artigo sincronizado com sucesso"
+
+msgid "Page tree"
+msgstr "Árvore de páginas"

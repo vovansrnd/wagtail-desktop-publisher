@@ -1,0 +1,63 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Wagtail Desktop Publisher"
+msgstr "Wagtail Desktop Publisher"
+
+msgid "Connect"
+msgstr "Bağlan"
+
+msgid "API URL"
+msgstr "API URL"
+
+msgid "Token"
+msgstr "Token"
+
+msgid "Connected sites"
+msgstr "Bağlı siteler"
+
+msgid "Article file (.md)"
+msgstr "Makale dosyası (.md)"
+
+msgid "Path to the article"
+msgstr "Makale yolu"
+
+msgid "Title"
+msgstr "Başlık"
+
+msgid "Slug (URL)"
+msgstr "Slug (URL)"
+
+msgid "Year"
+msgstr "Yıl"
+
+msgid "Publish immediately (otherwise save as draft)"
+msgstr "Hemen yayınla (aksi halde taslak olarak kaydet)"
+
+msgid "Sync article to Wagtail"
+msgstr "Makaleyi Wagtail ile eşitle"
+
+msgid "Images"
+msgstr "Görseller"
+
+msgid "Language"
+msgstr "Dil"
+
+msgid "Site"
+msgstr "Site"
+
+msgid "Section"
+msgstr "Bölüm"
+
+msgid "Scan"
+msgstr "Tara"
+
+msgid "Connection error"
+msgstr "Bağlantı hatası"
+
+msgid "Article synced successfully"
+msgstr "Makale başarıyla eşitlendi"
+
+msgid "Page tree"
+msgstr "Sayfa ağacı"

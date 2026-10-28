@@ -1,0 +1,63 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Wagtail Desktop Publisher"
+msgstr "Wagtail Desktop Publisher"
+
+msgid "Connect"
+msgstr "连接"
+
+msgid "API URL"
+msgstr "API 地址"
+
+msgid "Token"
+msgstr "令牌"
+
+msgid "Connected sites"
+msgstr "已连接站点"
+
+msgid "Article file (.md)"
+msgstr "文章文件 (.md)"
+
+msgid "Path to the article"
+msgstr "文章路径"
+
+msgid "Title"
+msgstr "标题"
+
+msgid "Slug (URL)"
+msgstr "Slug (URL)"
+
+msgid "Year"
+msgstr "年份"
+
+msgid "Publish immediately (otherwise save as draft)"
+msgstr "立即发布（否则保存为草稿）"
+
+msgid "Sync article to Wagtail"
+msgstr "将文章同步到 Wagtail"
+
+msgid "Images"
+msgstr "图片"
+
+msgid "Language"
+msgstr "语言"
+
+msgid "Site"
+msgstr "站点"
+
+msgid "Section"
+msgstr "栏目"
+
+msgid "Scan"
+msgstr "扫描"
+
+msgid "Connection error"
+msgstr "连接错误"
+
+msgid "Article synced successfully"
+msgstr "文章同步成功"
+
+msgid "Page tree"
+msgstr "页面树"

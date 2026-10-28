@@ -1,0 +1,63 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Wagtail Desktop Publisher"
+msgstr "Wagtail Desktop Publisher"
+
+msgid "Connect"
+msgstr "연결"
+
+msgid "API URL"
+msgstr "API URL"
+
+msgid "Token"
+msgstr "토큰"
+
+msgid "Connected sites"
+msgstr "연결된 사이트"
+
+msgid "Article file (.md)"
+msgstr "글 파일 (.md)"
+
+msgid "Path to the article"
+msgstr "글 경로"
+
+msgid "Title"
+msgstr "제목"
+
+msgid "Slug (URL)"
+msgstr "Slug (URL)"
+
+msgid "Year"
+msgstr "연도"
+
+msgid "Publish immediately (otherwise save as draft)"
+msgstr "즉시 게시 (아니면 초안으로 저장)"
+
+msgid "Sync article to Wagtail"
+msgstr "Wagtail에 글 동기화"
+
+msgid "Images"
+msgstr "이미지"
+
+msgid "Language"
+msgstr "언어"
+
+msgid "Site"
+msgstr "사이트"
+
+msgid "Section"
+msgstr "섹션"
+
+msgid "Scan"
+msgstr "스캔"
+
+msgid "Connection error"
+msgstr "연결 오류"
+
+msgid "Article synced successfully"
+msgstr "글이 성공적으로 동기화되었습니다"
+
+msgid "Page tree"
+msgstr "페이지 트리"

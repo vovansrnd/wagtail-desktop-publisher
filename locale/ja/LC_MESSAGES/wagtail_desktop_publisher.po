@@ -1,0 +1,63 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Wagtail Desktop Publisher"
+msgstr "Wagtail Desktop Publisher"
+
+msgid "Connect"
+msgstr "接続"
+
+msgid "API URL"
+msgstr "API URL"
+
+msgid "Token"
+msgstr "トークン"
+
+msgid "Connected sites"
+msgstr "接続済みサイト"
+
+msgid "Article file (.md)"
+msgstr "記事ファイル (.md)"
+
+msgid "Path to the article"
+msgstr "記事のパス"
+
+msgid "Title"
+msgstr "タイトル"
+
+msgid "Slug (URL)"
+msgstr "Slug (URL)"
+
+msgid "Year"
+msgstr "年"
+
+msgid "Publish immediately (otherwise save as draft)"
+msgstr "すぐに公開する（ otherwise 下書きとして保存）"
+
+msgid "Sync article to Wagtail"
+msgstr "記事をWagtailへ同期"
+
+msgid "Images"
+msgstr "画像"
+
+msgid "Language"
+msgstr "言語"
+
+msgid "Site"
+msgstr "サイト"
+
+msgid "Section"
+msgstr "セクション"
+
+msgid "Scan"
+msgstr "スキャン"
+
+msgid "Connection error"
+msgstr "接続エラー"
+
+msgid "Article synced successfully"
+msgstr "記事の同期に成功しました"
+
+msgid "Page tree"
+msgstr "ページツリー"

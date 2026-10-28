@@ -1,274 +1,191 @@
-import datetime
+# gui/app.py — GUI publisher v2 на NiceGUI.
+#
+# Запуск: wagtail-publisher-gui (открывает http://localhost:8333)
+# Тема: следует системной настройке ОС (тёмная/светлая) автоматически.
+# Языки: системный язык или выбор в шапке (13 языков).
+from __future__ import annotations
+
 import os
-import json
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+import threading
+
 import frontmatter
+from nicegui import ui
 
-from wagtail_desktop_publisher.core.client import WagtailClient
+from wagtail_desktop_publisher.core.config import load_config, save_config
+from wagtail_desktop_publisher.core.sync import Article, SyncEngine, SyncError, WagtailAPI
+from wagtail_desktop_publisher.i18n import SUPPORTED_LANGUAGES, get_translation
 
-CONFIG_FILE = os.path.expanduser("~/.wagtail_publisher.json")
-
-
-DEFAULT_API_URL = "https://vs-svet.ru/api/v3"
-
-
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            # Повреждённый конфиг не должен затереть сохранённый токен
-            return {"api_url": DEFAULT_API_URL, "token": "", "corrupted": True}
-    return {"api_url": DEFAULT_API_URL, "token": ""}
+PAGE_TYPE = "blog.BlogPage"
+CFG = load_config()
+STATE = {"lang": CFG.get("language") or None}
 
 
-def save_config(cfg):
-    # Токен — секрет: файл только для владельца
-    fd = os.open(CONFIG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(cfg, f, indent=2)
+class UIState:
+    """Состояние сессии браузера."""
 
-
-class PublisherApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Wagtail Desktop Publisher v0.2")
-        self.root.geometry("720x680")
-        self.root.minsize(680, 600)
-
+    def __init__(self):
         self.cfg = load_config()
-        self.client = None
-        self.sites = []
-        self.current_file = None
+        self.api: WagtailAPI | None = None
+        self.sites: list = []
+        self.site_id: int | None = None
+        self.parent_id: int | None = None
+        self.article_path: str = (self.cfg.get("last_article") or "").strip()
 
-        self._build_ui()
 
-        if self.cfg.get("token"):
-            self.root.after(100, self.connect_server)
+@ui.page("/")
+async def build_index():
+    st = UIState()
+    _ = get_translation(STATE["lang"])
 
-    def _build_ui(self):
-        pad = {"padx": 10, "pady": 4}
+    with ui.header().classes("items-center justify-between"):
+        ui.label(_("Wagtail Desktop Publisher")).classes("text-lg font-bold")
+        ui.select(
+            {code: name for code, name in SUPPORTED_LANGUAGES},
+            value=STATE["lang"] if STATE["lang"] in {c for c, _ in SUPPORTED_LANGUAGES} else None,
+            on_change=lambda e: (save_lang(e.value or None), ui.navigate.reload()),
+            label=_("Language"),
+        ).props("dense outlined")
 
-        # 1. Сервер
-        conn_frame = ttk.LabelFrame(self.root, text="Подключение к Wagtail API")
-        conn_frame.pack(fill="x", **pad)
+    with ui.splitter(value=40).classes("w-full") as splitter:
+        # ---------------- ЛЕВАЯ КОЛОНКА: подключение и статья ----------------
+        with splitter.before:
+            with ui.card().classes("w-full"):
+                ui.label(_("Connect")).classes("text-md font-bold")
+                url_in = ui.input(_("API URL"), value=st.cfg.get("api_url", "")).classes("w-full")
+                token_in = ui.input(
+                    _("Token"), value=st.cfg.get("token", ""),
+                    password=True, password_toggle_button=True,
+                ).classes("w-full")
+                site_sel = ui.select({}, label=_("Site"), with_input=True).classes("w-full")
+                section_sel = ui.select({}, label=_("Section"), with_input=True).classes("w-full")
 
-        ttk.Label(conn_frame, text="URL:").grid(row=0, column=0, sticky="w", **pad)
-        self.api_entry = ttk.Entry(conn_frame, width=32)
-        self.api_entry.insert(0, self.cfg.get("api_url", "https://vs-svet.ru/api/v3"))
-        self.api_entry.grid(row=0, column=1, sticky="ew", **pad)
+                def do_connect():
+                    _ = get_translation(STATE["lang"])
+                    try:
+                        st.api = WagtailAPI(url_in.value.strip(), token_in.value.strip())
+                        st.sites = st.api.sites()
+                    except SyncError as e:
+                        ui.notify(f"{_('Connection error')}: {e}", type="negative")
+                        return
+                    options = {
+                        s["root_page_id"]: (
+                            s.get("site_name") or s.get("hostname") or f"site {s['id']}"
+                        )
+                        for s in st.sites
+                    }
+                    site_sel.options = options
+                    site_sel.value = list(options)[0] if options else None
+                    site_sel.update()
+                    st.cfg["api_url"] = url_in.value.strip()
+                    st.cfg["token"] = token_in.value.strip()
+                    save_config(st.cfg)
+                    ui.notify(f"OK: {len(st.sites)}", type="positive")
 
-        ttk.Label(conn_frame, text="Token:").grid(row=0, column=2, sticky="w", **pad)
-        self.token_entry = ttk.Entry(conn_frame, show="*", width=25)
-        self.token_entry.insert(0, self.cfg.get("token", ""))
-        self.token_entry.grid(row=0, column=3, sticky="ew", **pad)
+                ui.button(_("Connect"), on_click=do_connect).props("outline")
 
-        ttk.Button(conn_frame, text="Подключиться", command=self.connect_server).grid(row=0, column=4, **pad)
-        conn_frame.columnconfigure(1, weight=1)
+                def on_site_change(e):
+                    st.site_id = e.value
+                    if not (st.api and e.value):
+                        return
+                    resp = st.api.pages(child_of=e.value, limit=100)
+                    opts = {e.value: f"★ id {e.value}"}
+                    for p in resp.get("items", []):
+                        opts[p["id"]] = p["title"]
+                    section_sel.options = opts
+                    section_sel.value = e.value
 
-        # 2. Выбор сайта и куда публиковать
-        dest_frame = ttk.LabelFrame(self.root, text="Куда публиковать")
-        dest_frame.pack(fill="x", **pad)
+                site_sel.on_value_change(on_site_change)
+                section_sel.on_value_change(lambda e: setattr(st, "parent_id", e.value))
 
-        ttk.Label(dest_frame, text="Сайт:").grid(row=0, column=0, sticky="w", **pad)
-        self.site_combo = ttk.Combobox(dest_frame, state="readonly", width=35)
-        self.site_combo.grid(row=0, column=1, sticky="ew", **pad)
-        self.site_combo.bind("<<ComboboxSelected>>", self.on_site_selected)
+            with ui.card().classes("w-full"):
+                ui.label(_("Article file (.md)")).classes("text-md font-bold")
+                path_in = ui.input(_("Path to the article"), value=st.article_path).classes("w-full")
+                title_in = ui.input(_("Title")).classes("w-full")
+                slug_in = ui.input(_("Slug (URL)")).classes("w-full")
+                year_in = ui.input(_("Year"), value="2026").classes("w-32")
+                info_label = ui.label("").classes("text-xs text-grey-7")
 
-        ttk.Label(dest_frame, text="Родительская страница:").grid(row=1, column=0, sticky="w", **pad)
-        self.parent_combo = ttk.Combobox(dest_frame, state="readonly", width=35)
-        self.parent_combo.grid(row=1, column=1, sticky="ew", **pad)
-        dest_frame.columnconfigure(1, weight=1)
+                def on_path_change(e):
+                    st.article_path = (e.value or "").strip()
 
-        # 3. Выбор файла статьи
-        file_frame = ttk.LabelFrame(self.root, text="Файл статьи (.md)")
-        file_frame.pack(fill="x", **pad)
+                path_in.on_value_change(on_path_change)
 
-        self.file_label = ttk.Label(file_frame, text="Файл не выбран", font=("Helvetica", 10, "bold"))
-        self.file_label.pack(side="left", fill="x", expand=True, padx=10, pady=8)
-        ttk.Button(file_frame, text="Выбрать файл…", command=self.select_file).pack(side="right", padx=10)
+                def on_scan():
+                    _ = get_translation(STATE["lang"])
+                    st.article_path = path_in.value.strip()
+                    if not st.article_path or not os.path.exists(st.article_path):
+                        ui.notify("404", type="negative")
+                        return
+                    post = frontmatter.load(st.article_path)
+                    title_in.value = post.get("title", "")
+                    slug_in.value = post.get("slug", "")
+                    year_in.value = str(post.get("year", "2026"))
+                    imgs = Article(st.article_path).local_images()
+                    missing = sum(1 for _rel, p in imgs if p is None)
+                    info_label.text = (
+                        f"{_('Images')}: {len(imgs)}"
+                        + (f" ({missing} ⚠️)" if missing else "")
+                    )
+                    st.cfg["last_article"] = st.article_path
+                    save_config(st.cfg)
 
-        # 4. Параметры статьи и картинок
-        meta_frame = ttk.LabelFrame(self.root, text="Параметры статьи и загрузки картинок")
-        meta_frame.pack(fill="x", **pad)
+                ui.button(_("Scan"), on_click=on_scan).props("flat dense")
 
-        ttk.Label(meta_frame, text="Заголовок:").grid(row=0, column=0, sticky="w", **pad)
-        self.title_entry = ttk.Entry(meta_frame)
-        self.title_entry.grid(row=0, column=1, columnspan=3, sticky="ew", **pad)
+                publish_switch = ui.switch(
+                    _("Publish immediately (otherwise save as draft)"),
+                    value=bool(st.cfg.get("last_published", False)),
+                )
 
-        ttk.Label(meta_frame, text="Slug (URL):").grid(row=1, column=0, sticky="w", **pad)
-        self.slug_entry = ttk.Entry(meta_frame, width=25)
-        self.slug_entry.grid(row=1, column=1, sticky="ew", **pad)
+        # ---------------- ПРАВАЯ КОЛОНКА: лог и кнопка ----------------
+        with splitter.after:
+            sync_btn = ui.button(_("Sync article to Wagtail")).classes("w-full")
+            log_box = ui.log(max_lines=400).classes("w-full flex-grow")
 
-        ttk.Label(meta_frame, text="Папка года:").grid(row=1, column=2, sticky="w", **pad)
-        self.year_entry = ttk.Entry(meta_frame, width=10)
-        self.year_entry.insert(0, str(datetime.datetime.now().year))
-        self.year_entry.grid(row=1, column=3, sticky="w", **pad)
+        def do_sync():
+            _ = get_translation(STATE["lang"])
 
-        meta_frame.columnconfigure(1, weight=1)
+            def worker():
+                try:
+                    engine = SyncEngine(st.api, st.cfg.get("site", ""))
+                    res = engine.sync(
+                        st.article_path,
+                        parent_id=st.parent_id,
+                        publish=publish_switch.value,
+                        title=title_in.value or None,
+                        slug=slug_in.value or None,
+                        year=year_in.value or None,
+                        log=lambda m: log_box.push(m),
+                    )
+                    log_box.push(
+                        f"{_('Article synced successfully')}: id {res.get('id')} ({res.get('mode')})"
+                    )
+                    st.cfg["last_published"] = publish_switch.value
+                    save_config(st.cfg)
+                except SyncError as e:
+                    log_box.push(f"❌ {e}")
+                except Exception as e:  # сеть/сервер — показываем в логе, GUI не падает
+                    log_box.push(f"❌ {e.__class__.__name__}: {e}")
 
-        # Инфо о найденных картинках и привязке ID
-        self.info_label = ttk.Label(meta_frame, text="Картинки: не просканировано", foreground="#007d7e")
-        self.info_label.grid(row=2, column=0, columnspan=4, sticky="w", padx=10, pady=2)
+            threading.Thread(target=worker, daemon=True).start()
 
-        # 5. Опции
-        opts_frame = ttk.Frame(self.root)
-        opts_frame.pack(fill="x", padx=10, pady=2)
+        sync_btn.on_click(do_sync)
 
-        self.publish_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            opts_frame,
-            text="Опубликовать сразу на сайте (иначе сохранить как ЧЕРНОВИК)",
-            variable=self.publish_var,
-        ).pack(side="left")
 
-        # 6. Консольный лог
-        self.log_box = tk.Text(self.root, height=8, bg="#1a1a1a", fg="#98c379", font=("Monospace", 9))
-        self.log_box.pack(fill="both", expand=True, padx=10, pady=5)
-
-        # 7. Большая кнопка действия
-        self.sync_btn = ttk.Button(
-            self.root, text="Синхронизировать статью в Wagtail", command=self.run_sync, state="disabled"
-        )
-        self.sync_btn.pack(fill="x", padx=10, pady=8)
-
-    def log(self, msg):
-        self.log_box.insert("end", f"{msg}\n")
-        self.log_box.see("end")
-
-    def connect_server(self):
-        url = self.api_entry.get().strip()
-        token = self.token_entry.get().strip()
-        if not url or not token:
-            return
-
-        self.cfg["api_url"] = url
-        self.cfg["token"] = token
-        save_config(self.cfg)
-
-        self.client = WagtailClient(url, token)
-        self.log("Подключение к серверу Wagtail API...")
-
-        try:
-            self.sites = self.client.get_sites()
-            if not self.sites:
-                self.log("❌ Ошибка: список сайтов пуст.")
-                return
-
-            self.site_combo["values"] = [
-                f"{s.get('site_name') or s.get('hostname')} (Root ID: {s.get('root_page_id')})"
-                for s in self.sites
-            ]
-            self.site_combo.current(0)
-            self.log(f"✅ Успешно! Подключено сайтов: {len(self.sites)}")
-            self.on_site_selected(None)
-        except Exception as e:
-            self.log(f"❌ Сбой соединения: {e}")
-
-    def on_site_selected(self, event):
-        idx = self.site_combo.current()
-        if idx >= 0:
-            site = self.sites[idx]
-            root_id = site.get("root_page_id")
-            site_name = site.get("site_name") or site.get("hostname")
-
-            # В выпадающий список родителей первым делом ставим САМ КОРЕНЬ САЙТА!
-            parent_options = [(f"★ [Корень сайта] {site_name} (ID: {root_id})", root_id)]
-
-            # И добираем подразделы
-            children = self.client.get_child_sections(root_id)
-            for c in children:
-                parent_options.append((f"  └─ {c.get('title')} (ID: {c.get('id')})", c.get("id")))
-
-            self.parent_data = parent_options
-            self.parent_combo["values"] = [p[0] for p in parent_options]
-            self.parent_combo.current(0)
-
-    def select_file(self):
-        f = filedialog.askopenfilename(filetypes=[("Markdown files", "*.md"), ("All files", "*.*")])
-        if not f:
-            return
-
-        self.current_file = f
-        self.file_label.config(text=os.path.basename(f), foreground="#007d7e")
-
-        # Читаем frontmatter
-        post = frontmatter.load(f)
-        title = post.get("title", os.path.splitext(os.path.basename(f))[0])
-        slug = post.get("slug", "")
-        wagtail_id = post.get("wagtail_id")
-        year = post.get("year", datetime.datetime.now().year)
-
-        self.title_entry.delete(0, "end")
-        self.title_entry.insert(0, title)
-
-        self.slug_entry.delete(0, "end")
-        self.slug_entry.insert(0, slug)
-
-        self.year_entry.delete(0, "end")
-        self.year_entry.insert(0, str(year))
-
-        # Сканируем картинки
-        images = self.client.find_local_images(f) if self.client else []
-        valid_img = sum(1 for img in images if img[2])
-
-        status_wagtail = f"Привязан к Wagtail ID: {wagtail_id} (режим ОБНОВЛЕНИЯ)" if wagtail_id else "Новая статья (режим СОЗДАНИЯ)"
-        self.info_label.config(text=f"Статус: {status_wagtail} | Картинок в тексте: {len(images)} (готово к заливке: {valid_img})")
-
-        self.sync_btn.config(state="normal")
-        self.log(f"Выбран файл: {f}")
-        if wagtail_id:
-            self.log(f"Статья уже существует в Wagtail под ID {wagtail_id}. Повторная синхронизация обновит её.")
-
-    def run_sync(self):
-        if not self.current_file or not self.client:
-            return
-
-        title = self.title_entry.get().strip()
-        slug = self.slug_entry.get().strip()
-        year = self.year_entry.get().strip()
-
-        parent_idx = self.parent_combo.current()
-        parent_id = self.parent_data[parent_idx][1]
-        publish_now = self.publish_var.get()
-
-        self.log(f"\n--- Синхронизация '{title}' (папка: images/{year}/{slug or 'misc'}) ---")
-        try:
-            res = self.client.sync_article(
-                self.current_file,
-                parent_id,
-                custom_title=title,
-                custom_slug=slug,
-                custom_year=year,
-                publish_now=publish_now,
-            )
-
-            if res.get("success"):
-                mode = res.get("mode").upper()
-                wag_id = res.get("id")
-                img_cnt = res.get("uploaded_images", 0)
-
-                self.log(f"✅ УСПЕХ! Статья {mode} под ID {wag_id}!")
-                self.log(f"Загружено локальных изображений на сервер: {img_cnt}")
-                self.log("Файл .md на компьютере обновлен и синхронизирован.")
-
-                self.select_file() # обновляем плашку статуса
-                messagebox.showinfo("Успешно", f"Статья {mode} (ID: {wag_id})!\nЗагружено картинок: {img_cnt}")
-            else:
-                self.log(f"❌ ОШИБКА: {res.get('error')}")
-                messagebox.showerror("Ошибка", res.get("error"))
-        except Exception as e:
-            self.log(f"❌ Исключение: {e}")
-            messagebox.showerror("Сбой", str(e))
+def save_lang(lang):
+    CFG["language"] = lang
+    save_config(CFG)
 
 
 def main():
-    root = tk.Tk()
-    app = PublisherApp(root)
-    root.mainloop()
+    ui.run(
+        title="Wagtail Desktop Publisher",
+        port=int(os.environ.get("PUBLISHER_PORT", "8333")),
+        dark=None,  # None = следовать системной теме ОС (тёмная/светлая)
+        reload=False,
+        show=False,
+        storage_secret="wagtail-desktop-publisher",
+    )
 
 
-if __name__ == "__main__":
+if __name__ in {"__main__", "__mp_main__"}:
     main()
