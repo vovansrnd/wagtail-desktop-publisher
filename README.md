@@ -106,11 +106,17 @@ Configuration is stored in `~/.wagtail_publisher.json` (chmod 600):
 wagtail-publisher-gui
 ```
 
-Opens `http://localhost:8333`. Connect (URL + token), pick a site and a
-section from the live page tree, pick the article, press Sync. The theme
-follows the OS dark/light setting; the UI language follows the system
-locale or is chosen in the header (en, ru, de, es, fr, it, pt-BR, nl, pl,
-tr, zh-CN, ja, ko).
+A **native desktop window** (CustomTkinter — no browser involved). The
+appearance follows the OS dark/light theme automatically
+(`set_appearance_mode("system")`), the UI language follows the system
+locale or the `language` key in the config (en, ru, de, es, fr, it,
+pt-BR, nl, pl, tr, zh-CN, ja, ko).
+
+Flow: Connect (URL + token) → pick a site and a section (children are
+loaded from the live API) → pick the article file → Scan (fills
+title/slug/year, counts local images) → Sync. All network work runs in a
+background thread, the window never freezes; the log shows every image
+upload and reuse.
 
 ## 4. Requirements for the target Wagtail site
 

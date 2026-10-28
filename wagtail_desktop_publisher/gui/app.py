@@ -1,15 +1,16 @@
-# gui/app.py — GUI publisher v2 на NiceGUI.
+# gui/app.py — нативный GUI publisher v2 на CustomTkinter.
 #
-# Запуск: wagtail-publisher-gui (открывает http://localhost:8333)
-# Тема: следует системной настройке ОС (тёмная/светлая) автоматически.
-# Языки: системный язык или выбор в шапке (13 языков).
+# Запуск: wagtail-publisher-gui
+# Тема: следует системной настройке ОС (тёмная/светлая) —
+#       customtkinter.set_appearance_mode("system").
+# Язык: системный или из конфига (ключ "language"); 13 языков.
 from __future__ import annotations
 
 import os
 import threading
 
+import customtkinter as ctk
 import frontmatter
-from nicegui import ui
 
 from wagtail_desktop_publisher.core.config import load_config, save_config
 from wagtail_desktop_publisher.core.sync import Article, SyncEngine, SyncError, WagtailAPI
@@ -17,176 +18,254 @@ from wagtail_desktop_publisher.i18n import SUPPORTED_LANGUAGES, get_translation
 
 PAGE_TYPE = "blog.BlogPage"
 CFG = load_config()
-STATE = {"lang": CFG.get("language") or None}
+LANG = CFG.get("language") or None
 
 
-class UIState:
-    """Состояние сессии браузера."""
+def _(key: str) -> str:
+    return get_translation(LANG)(key)
 
+
+class PublisherApp(ctk.CTk):
     def __init__(self):
-        self.cfg = load_config()
+        super().__init__()
+        ctk.set_appearance_mode("system")   # тема как в ОС
+        ctk.set_default_color_theme("blue")
+        self.title(_("Wagtail Desktop Publisher"))
+        self.geometry("980x720")
+        self.minsize(880, 640)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(5, weight=1)
+
+        self.cfg = dict(CFG)
         self.api: WagtailAPI | None = None
         self.sites: list = []
-        self.site_id: int | None = None
-        self.parent_id: int | None = None
-        self.article_path: str = (self.cfg.get("last_article") or "").strip()
+        self.site_id = None
+        self.parent_id = None
+        self.article_path = (self.cfg.get("last_article") or "").strip()
 
+        self._build()
+        if self.cfg.get("token"):
+            self.after(300, self._connect)
 
-@ui.page("/")
-async def build_index():
-    st = UIState()
-    _ = get_translation(STATE["lang"])
+    # ---------------- построение интерфейса ----------------
 
-    with ui.header().classes("items-center justify-between"):
-        ui.label(_("Wagtail Desktop Publisher")).classes("text-lg font-bold")
-        ui.select(
-            {code: name for code, name in SUPPORTED_LANGUAGES},
-            value=STATE["lang"] if STATE["lang"] in {c for c, _ in SUPPORTED_LANGUAGES} else None,
-            on_change=lambda e: (save_lang(e.value or None), ui.navigate.reload()),
-            label=_("Language"),
-        ).props("dense outlined")
+    def _build(self):
+        # --- подключение ---
+        conn = ctk.CTkFrame(self)
+        conn.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
+        conn.grid_columnconfigure(1, weight=1)
 
-    with ui.splitter(value=40).classes("w-full") as splitter:
-        # ---------------- ЛЕВАЯ КОЛОНКА: подключение и статья ----------------
-        with splitter.before:
-            with ui.card().classes("w-full"):
-                ui.label(_("Connect")).classes("text-md font-bold")
-                url_in = ui.input(_("API URL"), value=st.cfg.get("api_url", "")).classes("w-full")
-                token_in = ui.input(
-                    _("Token"), value=st.cfg.get("token", ""),
-                    password=True, password_toggle_button=True,
-                ).classes("w-full")
-                site_sel = ui.select({}, label=_("Site"), with_input=True).classes("w-full")
-                section_sel = ui.select({}, label=_("Section"), with_input=True).classes("w-full")
+        ctk.CTkLabel(conn, text=_("API URL")).grid(row=0, column=0, sticky="w", padx=10, pady=6)
+        self.url_in = ctk.CTkEntry(conn, width=340)
+        self.url_in.insert(0, self.cfg.get("api_url", ""))
+        self.url_in.grid(row=0, column=1, sticky="ew", padx=6, pady=6)
 
-                def do_connect():
-                    _ = get_translation(STATE["lang"])
-                    try:
-                        st.api = WagtailAPI(url_in.value.strip(), token_in.value.strip())
-                        st.sites = st.api.sites()
-                    except SyncError as e:
-                        ui.notify(f"{_('Connection error')}: {e}", type="negative")
-                        return
-                    options = {
-                        s["root_page_id"]: (
-                            s.get("site_name") or s.get("hostname") or f"site {s['id']}"
-                        )
-                        for s in st.sites
-                    }
-                    site_sel.options = options
-                    site_sel.value = list(options)[0] if options else None
-                    site_sel.update()
-                    st.cfg["api_url"] = url_in.value.strip()
-                    st.cfg["token"] = token_in.value.strip()
-                    save_config(st.cfg)
-                    ui.notify(f"OK: {len(st.sites)}", type="positive")
+        ctk.CTkLabel(conn, text=_("Token")).grid(row=0, column=2, sticky="w", padx=6)
+        self.token_in = ctk.CTkEntry(conn, width=240, show="•")
+        self.token_in.insert(0, self.cfg.get("token", ""))
+        self.token_in.grid(row=0, column=3, sticky="ew", padx=6, pady=6)
 
-                ui.button(_("Connect"), on_click=do_connect).props("outline")
+        self.connect_btn = ctk.CTkButton(conn, text=_("Connect"), command=self._connect, width=120)
+        self.connect_btn.grid(row=0, column=4, padx=10, pady=6)
 
-                def on_site_change(e):
-                    st.site_id = e.value
-                    if not (st.api and e.value):
-                        return
-                    resp = st.api.pages(child_of=e.value, limit=100)
-                    opts = {e.value: f"★ id {e.value}"}
-                    for p in resp.get("items", []):
-                        opts[p["id"]] = p["title"]
-                    section_sel.options = opts
-                    section_sel.value = e.value
+        # --- сайт и раздел ---
+        site = ctk.CTkFrame(self)
+        site.grid(row=1, column=0, sticky="ew", padx=12, pady=6)
+        site.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(site, text=_("Site")).grid(row=0, column=0, sticky="w", padx=10, pady=6)
+        self.site_box = ctk.CTkComboBox(site, width=380, state="readonly",
+                                        command=self._on_site)
+        self.site_box.set("—")
+        self.site_box.grid(row=0, column=1, sticky="ew", padx=6, pady=6)
+        ctk.CTkLabel(site, text=_("Section")).grid(row=1, column=0, sticky="w", padx=10, pady=6)
+        self.section_box = ctk.CTkComboBox(site, width=380, state="readonly",
+                                           command=self._on_section)
+        self.section_box.set("—")
+        self.section_box.grid(row=1, column=1, sticky="ew", padx=6, pady=6)
 
-                site_sel.on_value_change(on_site_change)
-                section_sel.on_value_change(lambda e: setattr(st, "parent_id", e.value))
+        # --- статья ---
+        art = ctk.CTkFrame(self)
+        art.grid(row=2, column=0, sticky="ew", padx=12, pady=6)
+        art.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(art, text=_("Article file (.md)")).grid(
+            row=0, column=0, sticky="w", padx=10, pady=(10, 2))
+        self.path_in = ctk.CTkEntry(art, width=560, placeholder_text=_("Path to the article"))
+        self.path_in.insert(0, self.article_path)
+        self.path_in.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10)
+        self.path_in.bind("<Return>", lambda _e: self._scan())
+        ctk.CTkButton(art, text=_("Scan"), width=90, command=self._scan).grid(
+            row=1, column=2, padx=8)
 
-            with ui.card().classes("w-full"):
-                ui.label(_("Article file (.md)")).classes("text-md font-bold")
-                path_in = ui.input(_("Path to the article"), value=st.article_path).classes("w-full")
-                title_in = ui.input(_("Title")).classes("w-full")
-                slug_in = ui.input(_("Slug (URL)")).classes("w-full")
-                year_in = ui.input(_("Year"), value="2026").classes("w-32")
-                info_label = ui.label("").classes("text-xs text-grey-7")
+        ctk.CTkLabel(art, text=_("Title")).grid(row=2, column=0, sticky="w", padx=10, pady=4)
+        self.title_in = ctk.CTkEntry(art, width=340)
+        self.title_in.grid(row=2, column=1, sticky="ew", padx=6, pady=4)
+        ctk.CTkLabel(art, text=_("Slug (URL)")).grid(row=3, column=0, sticky="w", padx=10, pady=4)
+        self.slug_in = ctk.CTkEntry(art, width=220)
+        self.slug_in.grid(row=3, column=1, sticky="w", padx=6, pady=4)
 
-                def on_path_change(e):
-                    st.article_path = (e.value or "").strip()
+        year_frame = ctk.CTkFrame(art, fg_color="transparent")
+        year_frame.grid(row=3, column=1, sticky="e", padx=6)
+        ctk.CTkLabel(year_frame, text=_("Year")).pack(side="left", padx=4)
+        self.year_in = ctk.CTkEntry(year_frame, width=90)
+        self.year_in.insert(0, self.cfg.get("year", "2026"))
+        self.year_in.pack(side="left")
 
-                path_in.on_value_change(on_path_change)
+        self.images_lbl = ctk.CTkLabel(art, text=f"{_('Images')}: —", text_color="grey")
+        self.images_lbl.grid(row=4, column=0, columnspan=3, sticky="w", padx=10, pady=(2, 10))
 
-                def on_scan():
-                    _ = get_translation(STATE["lang"])
-                    st.article_path = path_in.value.strip()
-                    if not st.article_path or not os.path.exists(st.article_path):
-                        ui.notify("404", type="negative")
-                        return
-                    post = frontmatter.load(st.article_path)
-                    title_in.value = post.get("title", "")
-                    slug_in.value = post.get("slug", "")
-                    year_in.value = str(post.get("year", "2026"))
-                    imgs = Article(st.article_path).local_images()
-                    missing = sum(1 for _rel, p in imgs if p is None)
-                    info_label.text = (
-                        f"{_('Images')}: {len(imgs)}"
-                        + (f" ({missing} ⚠️)" if missing else "")
-                    )
-                    st.cfg["last_article"] = st.article_path
-                    save_config(st.cfg)
+        # --- опции ---
+        opts = ctk.CTkFrame(self, fg_color="transparent")
+        opts.grid(row=3, column=0, sticky="ew", padx=12)
+        self.publish_var = ctk.BooleanVar(value=bool(self.cfg.get("last_published", False)))
+        ctk.CTkSwitch(opts, text=_("Publish immediately (otherwise save as draft)"),
+                      variable=self.publish_var).pack(side="left", padx=10)
+        ctk.CTkLabel(opts, text=f"{_('Language')}: {self._lang_label()}").pack(side="right", padx=10)
 
-                ui.button(_("Scan"), on_click=on_scan).props("flat dense")
+        # --- кнопка и лог ---
+        self.sync_btn = ctk.CTkButton(self, text=_("Sync article to Wagtail"),
+                                      height=42, command=self._sync)
+        self.sync_btn.grid(row=4, column=0, sticky="ew", padx=12, pady=8)
 
-                publish_switch = ui.switch(
-                    _("Publish immediately (otherwise save as draft)"),
-                    value=bool(st.cfg.get("last_published", False)),
-                )
+        self.log_box = ctk.CTkTextbox(self, height=200)
+        self.log_box.grid(row=5, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        self.log_box.configure(state="disabled")
 
-        # ---------------- ПРАВАЯ КОЛОНКА: лог и кнопка ----------------
-        with splitter.after:
-            sync_btn = ui.button(_("Sync article to Wagtail")).classes("w-full")
-            log_box = ui.log(max_lines=400).classes("w-full flex-grow")
+    # ---------------- служебное ----------------
 
-        def do_sync():
-            _ = get_translation(STATE["lang"])
+    def _lang_label(self):
+        code = (LANG or os.environ.get("LANG", "en")[:2])
+        return dict(SUPPORTED_LANGUAGES).get(code, code)
 
-            def worker():
-                try:
-                    engine = SyncEngine(st.api, st.cfg.get("site", ""),
-                        page_type=st.cfg.get("page_type", PAGE_TYPE))
-                    res = engine.sync(
-                        st.article_path,
-                        parent_id=st.parent_id,
-                        publish=publish_switch.value,
-                        title=title_in.value or None,
-                        slug=slug_in.value or None,
-                        year=year_in.value or None,
-                        log=lambda m: log_box.push(m),
-                    )
-                    log_box.push(
-                        f"{_('Article synced successfully')}: id {res.get('id')} ({res.get('mode')})"
-                    )
-                    st.cfg["last_published"] = publish_switch.value
-                    save_config(st.cfg)
-                except SyncError as e:
-                    log_box.push(f"❌ {e}")
-                except Exception as e:  # сеть/сервер — показываем в логе, GUI не падает
-                    log_box.push(f"❌ {e.__class__.__name__}: {e}")
+    def _log(self, msg):
+        def append():
+            self.log_box.configure(state="normal")
+            self.log_box.insert("end", f"{msg}\n")
+            self.log_box.see("end")
+            self.log_box.configure(state="disabled")
+        self.after(0, append)
 
-            threading.Thread(target=worker, daemon=True).start()
+    def _scan(self):
+        self.article_path = self.path_in.get().strip()
+        if not self.article_path or not os.path.exists(self.article_path):
+            self._log("404")
+            return
+        post = frontmatter.load(self.article_path)
+        self.title_in.delete(0, "end")
+        self.title_in.insert(0, post.get("title", ""))
+        self.slug_in.delete(0, "end")
+        self.slug_in.insert(0, post.get("slug", ""))
+        year = str(post.get("year", "2026"))
+        self.year_in.delete(0, "end")
+        self.year_in.insert(0, year)
+        imgs = Article(self.article_path).local_images()
+        missing = sum(1 for _rel, p in imgs if p is None)
+        self.images_lbl.configure(
+            text=f"{_('Images')}: {len(imgs)}" + (f" ({missing} ⚠️)" if missing else ""))
+        self.cfg["last_article"] = self.article_path
+        self.cfg["year"] = year
+        save_config(self.cfg)
+        self._log(self.article_path)
 
-        sync_btn.on_click(do_sync)
+    # ---------------- подключение ----------------
 
+    def _connect(self):
+        self.connect_btn.configure(state="disabled")
 
-def save_lang(lang):
-    CFG["language"] = lang
-    save_config(CFG)
+        def worker():
+            try:
+                api = WagtailAPI(self.url_in.get().strip(), self.token_in.get().strip())
+                sites = api.sites()
+            except SyncError as e:
+                self._log(f"❌ {e}")
+                self.after(0, lambda: self.connect_btn.configure(state="normal"))
+                return
+
+            self.api = api
+            self.sites = sites
+            options = [
+                (s.get("site_name") or s.get("hostname") or f"site {s['id']}", s["root_page_id"])
+                for s in self.sites
+            ]
+            self.site_id = options[0][1] if options else None
+
+            def fill():
+                self.cfg["api_url"] = self.url_in.get().strip()
+                self.cfg["token"] = self.token_in.get().strip()
+                save_config(self.cfg)
+                self.site_box.configure(values=[o[0] for o in options])
+                self.site_box.set(options[0][0] if options else "—")
+                self._fill_sections(self.site_id)
+                self.connect_btn.configure(state="normal")
+            self.after(0, fill)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _fill_sections(self, root_id):
+        options = [(f"★ id {root_id}", root_id)]
+        try:
+            for p in self.api.pages(child_of=root_id, limit=100).get("items", []):
+                options.append((p["title"], p["id"]))
+        except SyncError:
+            pass
+        self.section_box.configure(values=[o[0] for o in options])
+        self.section_box.set(options[0][0] if options else "—")
+        self.parent_id = options[0][1] if options else None
+
+    def _site_options(self):
+        return [
+            (s.get("site_name") or s.get("hostname") or f"site {s['id']}", s["root_page_id"])
+            for s in self.sites
+        ]
+
+    def _on_site(self, choice):
+        for label, root_id in self._site_options():
+            if label == choice:
+                self.site_id = root_id
+                self._fill_sections(root_id)
+                break
+
+    def _on_section(self, choice):
+        for title, page_id in self._section_options():
+            if title == choice:
+                self.parent_id = page_id
+                break
+
+    # ---------------- синхронизация ----------------
+
+    def _sync(self):
+        self.article_path = self.path_in.get().strip()
+        if not self.article_path or not self.api:
+            return
+        self.sync_btn.configure(state="disabled")
+        year = self.year_in.get().strip()
+        parent = self.parent_id
+        publish = self.publish_var.get()
+        title = self.title_in.get().strip() or None
+        slug = self.slug_in.get().strip() or None
+
+        def worker():
+            try:
+                engine = SyncEngine(self.api, self.cfg.get("site", ""),
+                                    page_type=self.cfg.get("page_type", PAGE_TYPE))
+                res = engine.sync(self.article_path, parent_id=parent, publish=publish,
+                                  title=title, slug=slug, year=year, log=self._log)
+                self._log(f"✅ {res.get('mode')} (id {res.get('id')})")
+                self.cfg["last_published"] = publish
+                save_config(self.cfg)
+            except SyncError as e:
+                self._log(f"❌ {e}")
+            except Exception as e:  # сеть и прочее — GUI не падает
+                self._log(f"❌ {e.__class__.__name__}: {e}")
+            finally:
+                self.after(0, lambda: self.sync_btn.configure(state="normal"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
 
 def main():
-    ui.run(
-        title="Wagtail Desktop Publisher",
-        port=int(os.environ.get("PUBLISHER_PORT", "8333")),
-        dark=None,  # None = следовать системной теме ОС (тёмная/светлая)
-        reload=False,
-        show=False,
-        storage_secret="wagtail-desktop-publisher",
-    )
+    app = PublisherApp()
+    app.mainloop()
 
 
-if __name__ in {"__main__", "__mp_main__"}:
+if __name__ == "__main__":
     main()
