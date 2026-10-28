@@ -12,7 +12,9 @@ import threading
 import customtkinter as ctk
 import frontmatter
 
-from wagtail_desktop_publisher.core.config import load_config, save_config
+from wagtail_desktop_publisher.core.config import (
+    load_config, load_site_cache, save_config, save_site_cache,
+)
 from wagtail_desktop_publisher.core.sync import Article, SyncEngine, SyncError, WagtailAPI
 from wagtail_desktop_publisher.i18n import SUPPORTED_LANGUAGES, get_translation
 
@@ -121,14 +123,44 @@ class PublisherApp(ctk.CTk):
                       variable=self.publish_var).pack(side="left", padx=10)
         ctk.CTkLabel(opts, text=f"{_('Language')}: {self._lang_label()}").pack(side="right", padx=10)
 
-        # --- кнопка и лог ---
+        # --- кнопка ---
         self.sync_btn = ctk.CTkButton(self, text=_("Sync article to Wagtail"),
                                       height=42, command=self._sync)
         self.sync_btn.grid(row=4, column=0, sticky="ew", padx=12, pady=8)
 
-        self.log_box = ctk.CTkTextbox(self, height=200)
-        self.log_box.grid(row=5, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        # --- табы: мета (рубрики/теги/главная картинка) и лог ---
+        self.tabs = ctk.CTkTabview(self)
+        self.tabs.grid(row=5, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        self.grid_rowconfigure(5, weight=1)
+        self.tabs.add(_("Meta"))
+        self.tabs.add("Log")
+
+        meta_tab = self.tabs.tab(_("Meta"))
+        self.meta_refresh = ctk.CTkButton(meta_tab, text="↻", width=34,
+                                          command=self._refresh_meta)
+        self.meta_refresh.place(relx=0.965, rely=0.02)
+        ctk.CTkLabel(meta_tab, text=_("Categories")).pack(anchor="w", padx=8, pady=(6, 2))
+        self.cat_frame = ctk.CTkScrollableFrame(meta_tab, height=160)
+        self.cat_frame.pack(fill="both", expand=True, padx=8)
+        ctk.CTkLabel(meta_tab, text=_("Tags")).pack(anchor="w", padx=8, pady=(8, 2))
+        self.tags_box = ctk.CTkComboBox(meta_tab, values=[], width=430)
+        self.tags_box.set("")
+        self.tags_box.pack(fill="x", padx=8)
+        self.tags_box.bind("KeyRelease", self._tags_autocomplete)
+        self.tags_box.configure(command=self._on_tag_pick)
+        ctk.CTkLabel(meta_tab, text="Main image").pack(anchor="w", padx=8, pady=(8, 2))
+        self.main_image_box = ctk.CTkComboBox(meta_tab, values=["(auto)"], width=430)
+        self.main_image_box.set("(auto)")
+        self.main_image_box.pack(fill="x", padx=8, pady=(0, 8))
+
+        log_tab = self.tabs.tab("Log")
+        self.log_box = ctk.CTkTextbox(log_tab)
+        self.log_box.pack(fill="both", expand=True)
         self.log_box.configure(state="disabled")
+
+        self._cat_vars: list = []
+        self._tag_names: list = []
+        self._image_map: dict = {}
 
     # ---------------- служебное ----------------
 
@@ -164,7 +196,68 @@ class PublisherApp(ctk.CTk):
         self.cfg["last_article"] = self.article_path
         self.cfg["year"] = year
         save_config(self.cfg)
+        self._image_map = post.get("images") or {}
+        self.main_image_box.configure(
+            values=["(auto)"] + list(self._image_map.keys()))
+        self.main_image_box.set("(auto)")
         self._log(self.article_path)
+
+    # ---------------- мета: рубрики и теги ----------------
+
+    def _populate_meta(self, categories, tags):
+        for w in self.cat_frame.winfo_children():
+            w.destroy()
+        self._cat_vars = []
+        for cat in categories:
+            var = ctk.BooleanVar(value=False)
+            indent = "    " * (cat.get("level") or 0)
+            box = ctk.CTkCheckBox(self.cat_frame, text=indent + cat["name"], variable=var)
+            box.pack(anchor="w", padx=4, pady=1)
+            self._cat_vars.append((cat["id"], var))
+        self._tag_names = [t["name"] for t in tags]
+        self.tags_box.configure(values=self._tag_names)
+        if not categories:
+            self.cat_frame.configure(label="—")
+
+    def _load_meta(self, force):
+        site = self.cfg.get("site", "")
+        cached = load_site_cache(site)
+        if cached and not force:
+            self.after(0, lambda: self._populate_meta(
+                cached.get("categories", []), cached.get("tags", [])))
+            self._log(f"рубрики/теги из кэша ({cached.get('fetched_at', '')})")
+
+        def worker():
+            try:
+                cats = self.api.categories()
+                tags = self.api.tags(limit=200)
+            except SyncError as e:
+                self._log(f"❌ мета: {e}")
+                return
+            save_site_cache(site, cats, tags)
+            self.after(0, lambda: self._populate_meta(cats, tags))
+            self._log(f"↻ рубрики: {len(cats)}, теги: {len(tags)}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _refresh_meta(self):
+        self._load_meta(force=True)
+
+    def _tags_autocomplete(self, event=None):
+        text = self.tags_box.get()
+        fragment = text.rsplit(",", 1)[-1].strip().lower()
+        if fragment:
+            values = [t for t in self._tag_names if fragment.lower() in t.lower()][:60]
+        else:
+            values = self._tag_names
+        self.tags_box.configure(values=values)
+
+    def _on_tag_pick(self, chosen):
+        current = self.tags_box.get()
+        prefix = current.rsplit(",", 1)[0]
+        new_value = (prefix.rstrip() + ", " if prefix.strip() else "") + chosen + ", "
+        self.tags_box.set(new_value)
+        self.tags_box.configure(values=self._tag_names)
 
     # ---------------- подключение ----------------
 
@@ -182,6 +275,8 @@ class PublisherApp(ctk.CTk):
 
             self.api = api
             self.sites = sites
+            self.cfg["site"] = (self.url_in.get().strip().split("/")[2]
+                                if "/" in self.url_in.get().strip() else "")
             options = [
                 (s.get("site_name") or s.get("hostname") or f"site {s['id']}", s["root_page_id"])
                 for s in self.sites
@@ -196,6 +291,7 @@ class PublisherApp(ctk.CTk):
                 self.site_box.set(options[0][0] if options else "—")
                 self._fill_sections(self.site_id)
                 self.connect_btn.configure(state="normal")
+                self._load_meta(force=False)
             self.after(0, fill)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -247,8 +343,16 @@ class PublisherApp(ctk.CTk):
             try:
                 engine = SyncEngine(self.api, self.cfg.get("site", ""),
                                     page_type=self.cfg.get("page_type", PAGE_TYPE))
+                category_ids = [cid for cid, var in self._cat_vars if var.get()] or None
+                tags = [t.strip() for t in self.tags_box.get().split(",") if t.strip()] or None
+                main_image_id = None
+                sel = self.main_image_box.get()
+                if sel != "(auto)" and sel in self._image_map:
+                    main_image_id = self._image_map[sel].get("id")
                 res = engine.sync(self.article_path, parent_id=parent, publish=publish,
-                                  title=title, slug=slug, year=year, log=self._log)
+                                  title=title, slug=slug, year=year, log=self._log,
+                                  category_ids=category_ids, tags=tags,
+                                  main_image_id=main_image_id)
                 self._log(f"✅ {res.get('mode')} (id {res.get('id')})")
                 self.cfg["last_published"] = publish
                 save_config(self.cfg)

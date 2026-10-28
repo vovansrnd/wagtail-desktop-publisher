@@ -1,5 +1,6 @@
 # core/config.py — конфигурация publisher v2.
 # Файл конфига: ~/.wagtail_publisher.json (0600, токен — секрет).
+import datetime
 import json
 import os
 
@@ -37,3 +38,37 @@ def theme_for_host(host):
         if domain in host:
             return theme
     return "nova"
+
+
+CACHE_FILE = os.path.expanduser("~/.wagtail_publisher_cache.json")
+
+
+def load_site_cache(site: str) -> dict:
+    """Кэш справочников сайта (рубрики, теги) — JSON, обновляется из API."""
+    if not site or not os.path.exists(CACHE_FILE):
+        return {}
+    try:
+        with open(CACHE_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get(site, {})
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_site_cache(site: str, categories: list, tags: list):
+    if not site:
+        return
+    data = {}
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            data = {}
+    data[site] = {
+        "categories": categories,
+        "tags": tags,
+        "fetched_at": datetime.datetime.now().isoformat(timespec="seconds"),
+    }
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)

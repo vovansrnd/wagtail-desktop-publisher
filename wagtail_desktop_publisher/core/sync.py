@@ -111,6 +111,24 @@ class WagtailAPI:
             raise SyncError(f"pages/ → HTTP {resp.status_code}")
         return resp.json()
 
+    def categories(self):
+        """Рубрики сайта (id, name, parent_id, level). Пусто, если у сайта их нет."""
+        resp = self.session.get(self._url("publisher-meta/categories/"), timeout=self.timeout)
+        if resp.status_code != 200:
+            raise SyncError(f"categories/ → HTTP {resp.status_code}")
+        return resp.json().get("items", [])
+
+    def tags(self, search=None, limit=200):
+        """Теги сайта (id, name), опционально с поиском по подстроке."""
+        resp = self.session.get(
+            self._url("publisher-meta/tags/"),
+            params={"search": search, "limit": limit},
+            timeout=self.timeout,
+        )
+        if resp.status_code != 200:
+            raise SyncError(f"tags/ → HTTP {resp.status_code}")
+        return resp.json().get("items", [])
+
     def upload_image(self, path, year, slug, title):
         with open(path, "rb") as fh:
             resp = self.session.post(
@@ -220,7 +238,8 @@ class SyncEngine:
     # ---------- основная операция ----------
 
     def sync(self, md_path, parent_id=None, publish=None, title=None, slug=None,
-             year=None, force=False, log=print) -> SyncResult:
+             year=None, force=False, log=print,
+             category_ids=None, tags=None, main_image_id=None) -> SyncResult:
         article = Article(md_path)
 
         if not article.title and not title:
@@ -265,16 +284,29 @@ class SyncEngine:
             payload["excerpt"] = md_lib.markdown(excerpt, extensions=["extra"])
         if article.post.get("date"):
             payload["date_published"] = str(article.post.get("date"))
-        if article.post.get("tags"):
+
+        # Теги: явное переопределение из GUI > frontmatter
+        if tags is not None:
+            payload["tags"] = list(tags)
+        elif article.post.get("tags"):
             payload["tags"] = list(article.post.get("tags"))
-        if article.post.get("category_ids"):
+
+        # Рубрики: GUI (ids) > frontmatter ids > frontmatter имена (резолв по сайту)
+        if category_ids is not None:
+            payload["categories"] = [int(c) for c in category_ids]
+        elif article.post.get("category_ids"):
             payload["categories"] = [int(c) for c in article.post.get("category_ids")]
+        elif article.post.get("categories"):
+            names = list(article.post.get("categories"))
+            payload["categories"] = self._resolve_category_names(names)
         if article.post.get("seo_description"):
             payload["seo_description"] = str(article.post.get("seo_description"))[:160]
 
         image_entries = [e for e in images_map.values() if e.get("id")]
         # Схема v3 принимает FK по имени _id
-        if article.post.get("main_image_id"):
+        if main_image_id is not None:
+            payload["main_image_id"] = int(main_image_id)
+        elif article.post.get("main_image_id"):
             payload["main_image_id"] = int(article.post.get("main_image_id"))
         elif image_entries:
             payload["main_image_id"] = image_entries[0]["id"]
@@ -315,6 +347,24 @@ class SyncEngine:
         )
 
     # ---------- вспомогательные операции ----------
+
+    def _resolve_category_names(self, names):
+        """Имена рубрик → id. Незнакомое имя — ошибка со списком доступных."""
+        cats = self.api.categories()
+        by_name = {c["name"]: c["id"] for c in cats}
+        resolved, unknown = [], []
+        for name in names:
+            if name in by_name:
+                resolved.append(by_name[name])
+            else:
+                unknown.append(name)
+        if unknown:
+            available = ", ".join(sorted(by_name)[:15])
+            raise SyncError(
+                f"Неизвестные рубрики: {', '.join(unknown)}. "
+                f"Доступны (первые 15): {available}"
+            )
+        return resolved
 
     def pull_meta(self, md_path, log=print) -> SyncResult:
         """Обновляет мета-состояние .md из Wagtail (тело НЕ трогаем)."""
