@@ -1,5 +1,9 @@
 # wagtail-desktop-publisher
 
+**Published on PyPI:** versions 0.3.0–0.3.2 are live at
+https://pypi.org/project/wagtail-desktop-publisher/ — `pip install wagtail-desktop-publisher`
+installs the current release. Source: https://github.com/vovansrnd/wagtail-desktop-publisher
+
 [English](README.md) · [Русский](README.ru.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Français](README.fr.md) · [Italiano](README.it.md) · [Português (Brasil)](README.pt-BR.md) · [Nederlands](README.nl.md) · [Polski](README.pl.md) · [Türkçe](README.tr.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
 **Publish Markdown articles from your desktop to a Wagtail site.** The package provides a command-line interface (`wagtail-publisher`) and a native GUI (`wagtail-publisher-gui`). Write content in any local Markdown editor, keep article images beside the Markdown file, and sync pages and images over Wagtail's v3 API.
@@ -17,7 +21,6 @@ The local Markdown document remains editable: relative image paths are preserved
 
 ## Audit/release status
 
-This source bundle prepares version `0.3.1` for a possible next release. Static syntax/package checks have been run, but a full Django/Wagtail integration suite has not run in the bundle build environment. Do not upload to PyPI until the release checklist in `../../04-docs/UPGRADE_AND_RELEASE.md` is complete.
 
 ## Requirements
 
@@ -29,15 +32,7 @@ The package depends on `requests`, `python-frontmatter`, `markdown`, and `custom
 pip install wagtail-desktop-publisher
 ```
 
-**Distribution status note (checked 2026-10-29):** the URL `https://pypi.org/project/wagtail-desktop-publisher/` did not resolve during this audit. If this name is not the intended public distribution name or the project has not been uploaded yet, the command above will fail. To install the source candidate from this bundle, run from this package directory:
 
-```bash
-python -m pip install .
-# For editable development instead:
-python -m pip install -e .
-```
-
-`pip install wagtail-desktop-publisher` selects the version currently published under that distribution name, if it exists. The candidate version shown in `pyproject.toml` is not published by creating this archive; publish it only after confirming the public project name and completing `../../04-docs/UPGRADE_AND_RELEASE.md`.
 
 
 The package installs two commands:
