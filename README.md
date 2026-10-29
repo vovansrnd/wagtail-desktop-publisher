@@ -34,7 +34,8 @@ slug: rca-connectors          # required: stable URL of the article
 excerpt: "Short description."
 date: 2026-10-28
 tags: ["audio", "diy"]
-category_ids: [12]            # optional: MPTT category ids of the site
+categories: ["Новости", "Дистрибутивы"]  # by name, resolved against the site list
+category_ids: [12, 15]        # or by id — either works
 ---
 
 Body text in Markdown.
@@ -162,7 +163,20 @@ verified on 8.0). The target site needs:
    written under its `…_id` name; `tags` is a list of tag names;
    `categories` a list of ids.
 
-4. **Images endpoint** — two supported setups, detected automatically:
+4. **Reference endpoints for the publisher (recommended)** — categories
+   and tags lists used by the GUI pickers and by name resolution:
+
+   ```python
+   # <project>/api_meta.py — see vsproject/api_meta.py for a reference
+   router = Router(tags=["publisher-meta"])  # GET /categories/, GET /tags/
+   api.add_router("/publisher-meta/", router)
+   ```
+
+   On a bare Wagtail without a category model the categories endpoint
+   returns an empty list and the GUI hides the picker — tags (taggit)
+   always work.
+
+5. **Images endpoint** — two supported setups, detected automatically:
 
    - **Bare Wagtail**: nothing extra. Uploaded images land in a
      Wagtail-native collection tree `year/slug` (e.g. `2026/my-article`).
