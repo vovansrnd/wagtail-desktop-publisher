@@ -11,6 +11,7 @@
 # 4. Картинки дедуплицируются через карту в frontmatter + хэш файла.
 import datetime
 import hashlib
+import json
 import os
 import re
 
@@ -33,8 +34,12 @@ def _sha256_text(text: str) -> str:
 
 
 def _file_sha256(path: str) -> str:
+    """Hash a file in bounded memory, including very large local images."""
+    digest = hashlib.sha256()
     with open(path, "rb") as fh:
-        return _sha256_bytes(fh.read())
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class SyncError(Exception):
@@ -64,7 +69,34 @@ class Article:
         return self.post.get("title") or ""
 
     def content_hash(self, title, excerpt):
-        return _sha256_text("\n".join([title, self.post.content, excerpt or ""]))
+        """Hash every user-controlled field that affects a Wagtail page.
+
+        Local image bytes are included as well as Markdown paths, otherwise an
+        edited image could be silently skipped while the article text is unchanged.
+        """
+        metadata_keys = (
+            "slug", "year", "date", "tags", "category_ids", "categories",
+            "seo_description", "main_image_id", "published",
+        )
+        local_images = []
+        for rel_path, abs_path in self.local_images():
+            try:
+                digest = _file_sha256(abs_path) if abs_path else None
+            except OSError:
+                digest = None
+            local_images.append({"path": rel_path, "sha256": digest})
+
+        signature = {
+            "title": title or "",
+            "content": self.post.content,
+            "excerpt": excerpt or "",
+            "metadata": {key: self.post.get(key) for key in metadata_keys},
+            "local_images": local_images,
+        }
+        encoded = json.dumps(
+            signature, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str
+        )
+        return _sha256_text(encoded)
 
     def save(self):
         with open(self.path, "w", encoding="utf-8") as fh:
@@ -74,16 +106,20 @@ class Article:
         """Локальные картинки в тексте: [(md_path, abs_path|None)].
         Путь внутри директории статьи; ../ и абсолютные за её пределами
         отбрасываются (защита от выноса произвольных файлов)."""
-        base = os.path.abspath(self.base_dir) + os.sep
+        base = os.path.realpath(self.base_dir)
         found = []
         for _alt, rel in IMG_MD_RE.findall(self.post.content):
-            if rel.startswith(_LOCAL_SKIP):
+            if rel.lower().startswith(_LOCAL_SKIP):
                 continue
-            full = os.path.normpath(os.path.join(self.base_dir, rel))
-            if not full.startswith(base):
+            candidate = os.path.realpath(os.path.join(self.base_dir, rel))
+            try:
+                inside_article_dir = os.path.commonpath((base, candidate)) == base
+            except ValueError:  # Different drives on Windows.
+                inside_article_dir = False
+            if not inside_article_dir:
                 found.append((rel, None))
                 continue
-            found.append((rel, full if os.path.exists(full) else None))
+            found.append((rel, candidate if os.path.isfile(candidate) else None))
         return found
 
 
@@ -257,6 +293,21 @@ class SyncEngine:
             publish = bool(article.post.get("published", False))
 
         excerpt = article.post.get("excerpt") or ""
+
+        # Store the effective metadata in frontmatter too. Otherwise GUI-selected
+        # tags/categories/main image can be sent once and then disappear from the
+        # local sync state, while a metadata-only edit is wrongly skipped.
+        article.post["title"] = title
+        article.post["slug"] = slug
+        article.post["year"] = str(year)
+        article.post["published"] = bool(publish)
+        if tags is not None:
+            article.post["tags"] = list(tags)
+        if category_ids is not None:
+            article.post["category_ids"] = [int(c) for c in category_ids]
+        if main_image_id is not None:
+            article.post["main_image_id"] = int(main_image_id)
+
         new_hash = article.content_hash(title, excerpt)
         wagtail_id = article.post.get("wagtail_id")
 

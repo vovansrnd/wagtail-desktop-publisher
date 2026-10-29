@@ -15,7 +15,7 @@ class WagtailClient:
     def get_sites(self):
         """Получает список сайтов из Wagtail."""
         url = f"{self.api_base_url}/sites/"
-        resp = requests.get(url, headers=self.headers)
+        resp = requests.get(url, timeout=30, headers=self.headers)
         if resp.status_code == 200:
             return resp.json().get("items", [])
         return []
@@ -23,7 +23,7 @@ class WagtailClient:
     def get_child_sections(self, parent_page_id):
         """Получает разделы или страницы внутри родителя."""
         url = f"{self.api_base_url}/pages/?child_of={parent_page_id}&limit=50"
-        resp = requests.get(url, headers=self.headers)
+        resp = requests.get(url, timeout=30, headers=self.headers)
         if resp.status_code == 200:
             return resp.json().get("items", [])
         return []
@@ -158,7 +158,7 @@ class WagtailClient:
                 post["slug"] = slug
             post["year"] = year
 
-            with open(md_path, "wb") as f:
+            with open(md_path, "w", encoding="utf-8") as f:
                 frontmatter.dump(post, f)
 
             return {

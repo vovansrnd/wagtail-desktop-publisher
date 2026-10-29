@@ -1,216 +1,161 @@
 # wagtail-desktop-publisher
 
-A standalone desktop & CLI utility to write articles in local Markdown editors
-(Zettlr, Obsidian, MarkText, VS Code, Joplin — anything that writes `.md`) and
-sync them into a Wagtail CMS site: automated image uploading, page metadata
-(title, slug, tags, categories, main image, excerpt, date), draft/publish
-control, and re-sync of already published articles.
+[English](README.md) · [Русский](README.ru.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Français](README.fr.md) · [Italiano](README.it.md) · [Português (Brasil)](README.pt-BR.md) · [Nederlands](README.nl.md) · [Polski](README.pl.md) · [Türkçe](README.tr.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-Works against the **Wagtail v3 API** (Wagtail ≥ 7.0) over HTTP — the CMS does
-not need to run on the same machine.
+**Publish Markdown articles from your desktop to a Wagtail site.** The package provides a command-line interface (`wagtail-publisher`) and a native GUI (`wagtail-publisher-gui`). Write content in any local Markdown editor, keep article images beside the Markdown file, and sync pages and images over Wagtail's v3 API.
 
-- GUI: `wagtail-publisher-gui` (NiceGUI, follows the OS dark/light theme,
-  13 UI languages)
-- CLI: `wagtail-publisher` (scriptable, JSON output)
+The local Markdown document remains editable: relative image paths are preserved in the file, while the publisher substitutes uploaded image URLs in the API payload. A content hash allows unchanged files to be skipped, reducing unnecessary API calls and Wagtail page revisions.
 
----
+## Features
 
-## 1. How the workflow looks
+- Create or update a page from Markdown and YAML frontmatter; publish it or leave it as a draft.
+- Upload local images and reuse them when their SHA-256 content is unchanged.
+- Track the Wagtail page ID, content hash, publication state, image map, slug, and URL in frontmatter.
+- Recursively process directories; inspect local sync state offline; refresh metadata from the server; unpublish pages.
+- GUI with OS dark/light appearance, site/parent selection from the API, scan-and-sync flow, background network operations, logs, and 13 UI locales.
+- Configuration stored in `~/.wagtail_publisher.json` with owner-only file permissions and atomic replacement.
 
+## Audit/release status
+
+This source bundle prepares version `0.3.1` for a possible next release. Static syntax/package checks have been run, but a full Django/Wagtail integration suite has not run in the bundle build environment. Do not upload to PyPI until the release checklist in `../../04-docs/UPGRADE_AND_RELEASE.md` is complete.
+
+## Requirements
+
+The package depends on `requests`, `python-frontmatter`, `markdown`, and `customtkinter`. It targets Wagtail's v3 API with write support. The original package documentation states Wagtail 7.0+ and reports verification against Wagtail 8.0; do not treat that as a guarantee for every later version. Verify the API endpoints and writable fields on your site before production use.
+
+## Installation
+
+```bash
+pip install wagtail-desktop-publisher
 ```
-~/articles/2026/rca-connectors/
-    index.md          ← you write this (frontmatter + Markdown)
-    images/
-        shot1.png     ← pictures live next to the article
-        shot2.png
+
+**Distribution status note (checked 2026-10-29):** the URL `https://pypi.org/project/wagtail-desktop-publisher/` did not resolve during this audit. If this name is not the intended public distribution name or the project has not been uploaded yet, the command above will fail. To install the source candidate from this bundle, run from this package directory:
+
+```bash
+python -m pip install .
+# For editable development instead:
+python -m pip install -e .
 ```
 
-`index.md`:
+`pip install wagtail-desktop-publisher` selects the version currently published under that distribution name, if it exists. The candidate version shown in `pyproject.toml` is not published by creating this archive; publish it only after confirming the public project name and completing `../../04-docs/UPGRADE_AND_RELEASE.md`.
+
+
+The package installs two commands:
+
+```bash
+wagtail-publisher --help
+wagtail-publisher-gui
+```
+
+A desktop environment is required for the GUI. The CLI is preferable for SSH sessions, automation, and CI jobs.
+
+## Article layout and frontmatter
+
+A typical local layout is:
+
+```text
+articles/
+└── 2026/rca-connectors/
+    ├── index.md
+    └── images/
+        ├── front.png
+        └── rear.png
+```
+
+Example `index.md`:
 
 ```markdown
 ---
 title: "Budget RCA connectors"
-slug: rca-connectors          # required: stable URL of the article
-excerpt: "Short description."
+slug: rca-connectors
+excerpt: "Short summary."
 date: 2026-10-28
-tags: ["audio", "diy"]
-categories: ["Новости", "Дистрибутивы"]  # by name, resolved against the site list
-category_ids: [12, 15]        # or by id — either works
+year: 2026
+tags: [audio, diy]
+category_ids: [12]
 ---
 
-Body text in Markdown.
+Article text with a local image:
 
-![A photo](images/shot1.png)   ← local relative path stays local
+> The optional desktop GUI is implemented in `wagtail_desktop_publisher/gui/`. This source bundle does not include a GUI screenshot.
 ```
 
-Then:
+`slug` is required because the publisher needs a stable target URL. The available fields depend on your page model and API configuration. Use the same Markdown file for later updates; do not delete the synchronization metadata from frontmatter unless you intentionally want to rebind the article.
+
+## CLI quick start
+
+Initialize the API connection (use your site's real API URL and a token created by a Wagtail administrator):
 
 ```bash
-wagtail-publisher publish ~/articles/2026/rca-connectors/index.md --parent 42
+wagtail-publisher init --url https://example.com/api/v3 --token YOUR_TOKEN --site example.com
 ```
 
-What happens:
-
-1. Local images are uploaded once and mapped in the frontmatter
-   (`images:` section, with a per-file hash). Re-syncs **reuse** them —
-   a changed file is detected by hash and re-uploaded.
-2. The Markdown body is converted to HTML (the CMS stores rich text)
-   with **server image URLs substituted only in the outgoing payload** —
-   your local `.md` keeps relative paths, so your local editor preview
-   keeps working forever.
-3. `main_image` is set automatically (first uploaded image unless you
-   provide `main_image_id`).
-4. A `content_hash` is stored. Re-running publish on an unchanged article
-   performs **zero API calls** — Wagtail creates a page revision on every
-   update, so this keeps the database from bloating.
-5. `wagtail_id`, `slug`, `content_hash`, the image map and the public URL
-   are written back into the `.md` frontmatter.
-
-### Editing an already published article
-
-Keep editing the same `.md` and run `publish` again — the article is
-updated (draft or published, your choice). `pull` refreshes the
-frontmatter meta (published state, URL) from the server without touching
-your text.
-
-## 2. CLI reference
-
-```
-wagtail-publisher init    --url https://site/api/v3 --token <token> [--site site.tld]
-wagtail-publisher publish <file.md | dir/> [--parent ID] [--publish]
-                          [--year 2026] [--force] [--json]
-wagtail-publisher status  <file.md | dir/>      # local, no network
-wagtail-publisher pull    <file.md | dir/>      # refresh meta from the server
-wagtail-publisher unpublish <file.md>
-```
-
-- `publish` on a directory walks it recursively and syncs every `.md`.
-- `status` compares the local `content_hash` — prints
-  `synced / modified / unbound`.
-- `--force` sends the article even if the hash matches (e.g. after
-  changing fields on the server side).
-
-Configuration is stored in `~/.wagtail_publisher.json` (chmod 600):
-
-```json
-{
-  "api_url": "https://example.com/api/v3",
-  "token": "wagtail_…",
-  "site": "example.com",
-  "default_parent_id": 42
-}
-```
-
-## 3. GUI
-
-```
-wagtail-publisher-gui
-```
-
-A **native desktop window** (CustomTkinter — no browser involved). The
-appearance follows the OS dark/light theme automatically
-(`set_appearance_mode("system")`), the UI language follows the system
-locale or the `language` key in the config (en, ru, de, es, fr, it,
-pt-BR, nl, pl, tr, zh-CN, ja, ko).
-
-Flow: Connect (URL + token) → pick a site and a section (children are
-loaded from the live API) → pick the article file → Scan (fills
-title/slug/year, counts local images) → Sync. All network work runs in a
-background thread, the window never freezes; the log shows every image
-upload and reuse.
-
-## 4. Requirements for the target Wagtail site
-
-The publisher talks to the **v3 API with write support** (Wagtail ≥ 7.0,
-verified on 8.0). The target site needs:
-
-1. **Mount the API** in the project `urls.py`:
-
-   ```python
-   from wagtail.api.v3 import urls as wagtailapi_v3_urls
-   # if you use the bundled publisher-images endpoint, import it first:
-   # import <project>.api  # registers the upload endpoint on the API
-
-   urlpatterns = [
-       path("api/v3/", wagtailapi_v3_urls.api.urls),
-       # …
-   ]
-   ```
-
-2. **An API token** for your user: Wagtail admin → Settings → API tokens
-   (or `APIToken.create_token(user=…, name=…)` from a shell).
-
-3. **Writable page fields**: declare on the page model what the API may
-   write. Fields listed as plain strings are read-only in the v3 API —
-   use `APIField(..., writable=True)`:
-
-   ```python
-   from wagtail.api import APIField
-
-   class BlogPage(Page):
-       api_fields = [
-           APIField("body", writable=True),
-           APIField("excerpt", writable=True),
-           APIField("main_image", writable=True),
-           APIField("date_published", writable=True),
-           APIField("tags", writable=True),
-           APIField("categories", writable=True),
-       ]
-   ```
-
-   Notes: a rich-text/Prose field is written as an **HTML string**
-   (this tool converts Markdown → HTML before sending); a foreign key is
-   written under its `…_id` name; `tags` is a list of tag names;
-   `categories` a list of ids.
-
-4. **Reference endpoints for the publisher (recommended)** — categories
-   and tags lists used by the GUI pickers and by name resolution:
-
-   ```python
-   # <project>/api_meta.py — see vsproject/api_meta.py for a reference
-   router = Router(tags=["publisher-meta"])  # GET /categories/, GET /tags/
-   api.add_router("/publisher-meta/", router)
-   ```
-
-   On a bare Wagtail without a category model the categories endpoint
-   returns an empty list and the GUI hides the picker — tags (taggit)
-   always work.
-
-5. **Images endpoint** — two supported setups, detected automatically:
-
-   - **Bare Wagtail**: nothing extra. Uploaded images land in a
-     Wagtail-native collection tree `year/slug` (e.g. `2026/my-article`).
-   - **wagtail-image-directories** (fields `year`/`slug` on the image
-     model): the same endpoint fills the directory fields and reuses the
-     plugin's `get_or_create_collection()`.
-
-   The publisher ships a small upload endpoint for this
-   (`/api/v3/publisher-images/`, see `vsproject/api_images.py` for a
-   reference implementation — copy it into your project and register it
-   on the v3 API router). Plain `POST /api/v3/images/` (Wagtail ≥ 8.0)
-   also works if you pass `collection` yourself.
-
-### Quick checklist that a site is ready
+Create or update a draft under the Wagtail parent page with ID `42`:
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" https://site/api/v3/whoami/        # → your user
-curl -H "Authorization: Bearer $TOKEN" "https://site/api/v3/pages/1/?fields=body"  # → fields present?
+wagtail-publisher publish articles/2026/rca-connectors/index.md --parent 42
 ```
 
-## 5. Revisions and database size
+Publish it immediately:
 
-Wagtail stores a page revision on every update. The publisher minimises
-noise: unchanged articles are skipped via `content_hash`, images are not
-re-uploaded. For old revisions housekeeping, prune them periodically
-(e.g. keep the last 10 per page) — a management command in the spirit of
-`prune_unused_renditions` is a good companion on the server.
+```bash
+wagtail-publisher publish articles/2026/rca-connectors/index.md --parent 42 --publish
+```
 
-## 6. Development
+Other commands:
+
+```text
+wagtail-publisher status articles/       # local/offline status
+wagtail-publisher pull articles/         # refresh metadata from Wagtail
+wagtail-publisher unpublish article.md   # unpublish a bound page
+wagtail-publisher publish articles/ --json
+```
+
+`publish` walks a directory recursively and processes `.md` files except `README.md`. `--force` sends an article even if its content hash matches. `--type` selects the page type, and `--year` overrides the image directory year for the operation.
+
+## Prepare the Wagtail site
+
+The target site must expose the v3 API and allow token-authenticated write requests. Check all of the following in staging:
+
+1. Mount Wagtail's API under `/api/v3/`.
+2. Create a token for a user that has permission to create/update the target pages and upload images.
+3. Mark the intended page API fields writable using the API mechanism supported by your Wagtail version. Typical fields include the rich-text body, excerpt, main image, publication date, tags, and categories; actual field names differ by project.
+4. Configure the image upload endpoint. This publisher currently posts files to `/api/v3/publisher-images/`. The source project contains `vsproject/api_images.py` as a reference implementation. Copy/adapt and register that endpoint in your own project, or adapt the client to your existing secure image-upload endpoint. Do not assume a stock Wagtail API installation automatically provides this custom route.
+5. If you use `wagtail-image-directories`, make sure the endpoint sets the image `year`/`slug` fields and uses that model's collection/path behavior.
+
+Do not expose a write-capable token in scripts committed to Git or share it in logs. Use a token with only the privileges needed to publish to the intended site and rotate it if it leaks.
+
+## Configuration and local files
+
+The API URL, token, site, and optional default parent are stored in `~/.wagtail_publisher.json`. The file is written with mode `0600` where supported. Treat it as a secret because it contains a bearer token. The publisher also maintains a separate site metadata cache in the user's home directory; it contains category/tag lookup data, not a replacement for the authoritative site database.
+
+The publisher resolves local image paths relative to the article directory and rejects paths that escape that directory. Missing image files are reported rather than silently converted to arbitrary local filesystem paths.
+
+## Storage and revisions
+
+Wagtail creates revisions when page content is updated. The publisher skips unchanged articles by comparing a content hash that includes relevant metadata and local image bytes. Images are reused when their hashes match. A change to a local image should therefore trigger upload even if the Markdown body does not change.
+
+Before bulk publishing, run `status`, test a small sample, and back up the target database and media. Review the number of revisions and uploaded originals after the first run. The publisher does not automatically prune old Wagtail page revisions or unused image renditions.
+
+## Recommended combinations
+
+- **`wagtail-image-directories`** is the closest companion: it can organize publisher uploads into `year/slug` paths, but the target site's custom `/api/v3/publisher-images/` endpoint must explicitly integrate with that plugin.
+- **`wagtail-prose-editor-images`** improves editing in Wagtail's admin; it is not required by the desktop publisher.
+- Comments and forum packages are independent of Markdown synchronization.
+
+## Troubleshooting
+
+- `401`/`403`: verify the token and the user's API/page/image permissions.
+- `404` on `publisher-images/`: install or register the custom endpoint, or configure the client to use your own endpoint.
+- Missing/wrong fields: inspect the page model's v3 API schema and writable field configuration.
+- Unexpected duplicate uploads: preserve the `images` map in frontmatter and do not edit the image file metadata manually; the publisher uses content hashes to determine reuse.
+- Incorrect destination: verify the parent page ID, `site`, page type (`--type`), and `slug`.
+
+## Development and license
 
 ```bash
 pip install -e .
-python scripts/build_locales.py   # rebuild .mo after editing strings
-pytest                            # (planned)
+python scripts/build_locales.py
 ```
 
-License: MIT.
+Run the CLI against a staging site before release. The source bundle does not include an automated test suite, so GUI behavior, API write operations, error handling, and cross-version compatibility need explicit verification. MIT.

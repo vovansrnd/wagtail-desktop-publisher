@@ -3,6 +3,8 @@
 import datetime
 import json
 import os
+import tempfile
+from urllib.parse import urlsplit
 
 CONFIG_FILE = os.path.expanduser("~/.wagtail_publisher.json")
 
@@ -26,16 +28,44 @@ def load_config():
 
 
 def save_config(cfg):
-    fd = os.open(CONFIG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    """Atomically save secrets with owner-only permissions, even over old files."""
+    config_dir = os.path.dirname(os.path.abspath(CONFIG_FILE))
+    fd, tmp_path = tempfile.mkstemp(prefix=".wagtail-publisher-", dir=config_dir, text=True)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, CONFIG_FILE)
+        try:
+            os.chmod(CONFIG_FILE, 0o600)
+        except OSError:
+            pass
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def theme_for_host(host):
-    """Тема сайта по домену: nova / zenway / floppy (дефолт nova)."""
-    host = (host or "").lower().split(":")[0]
+    """Select theme only for the configured host or one of its subdomains."""
+    raw_host = (host or "").strip().lower()
+    if "://" in raw_host:
+        host = urlsplit(raw_host).hostname or ""
+    else:
+        # urlsplit also handles a normal host:port pair without substring matching.
+        host = urlsplit("//" + raw_host).hostname or ""
+    host = host.rstrip(".")
     for domain, theme in SITE_THEMES.items():
-        if domain in host:
+        if host == domain or host.endswith("." + domain):
             return theme
     return "nova"
 

@@ -16,20 +16,27 @@ import sys
 import frontmatter
 
 from .core.config import load_config, save_config
-from .core.sync import SyncEngine, SyncError, WagtailAPI
+from .core.sync import Article, SyncEngine, SyncError, WagtailAPI
 
 PAGE_TYPE = "blog.BlogPage"
 
 
-def _engine(cfg):
+def _engine(cfg, page_type=None, require_api=True):
     api_url = cfg.get("api_url")
     token = cfg.get("token")
     if not api_url or not token:
-        raise SyncError(
-            "Нет конфигурации: запусти `wagtail-publisher init --url <API URL> --token <token>`"
-        )
-    return SyncEngine(WagtailAPI(api_url, token), cfg.get("site", ""),
-                      page_type=cfg.get("page_type", PAGE_TYPE))
+        if require_api:
+            raise SyncError(
+                "Нет конфигурации: запусти `wagtail-publisher init --url <API URL> --token <token>`"
+            )
+        api = None
+    else:
+        api = WagtailAPI(api_url, token)
+    return SyncEngine(
+        api,
+        cfg.get("site", ""),
+        page_type=page_type or cfg.get("page_type", PAGE_TYPE),
+    )
 
 
 def _iter_md(target):
@@ -54,9 +61,10 @@ def cmd_init(args):
 
 def cmd_publish(args):
     cfg = load_config()
-    engine = _engine(cfg)
+    engine = _engine(cfg, page_type=args.type)
     parent = args.parent or cfg.get("default_parent_id")
     results = []
+    log = (lambda message: print(message, file=sys.stderr)) if args.json else print
     for md in _iter_md(args.target):
         try:
             res = engine.sync(
@@ -65,12 +73,7 @@ def cmd_publish(args):
                 publish=args.publish,
                 year=args.year,
                 force=args.force,
-            ) if not args.type else engine.sync(
-                md,
-                parent_id=parent,
-                publish=args.publish,
-                year=args.year,
-                force=args.force,
+                log=log,
             )
             res["file"] = md
             results.append(res)
@@ -81,18 +84,20 @@ def cmd_publish(args):
                 extra = f" | картинки: ⬆️{res['images']['uploaded']} ↩️{res['images']['reused']}"
                 if res["images"]["missing"]:
                     extra += f" ⚠️{res['images']['missing']}"
-            print(f"{icon}: {md}{extra}")
+            if not args.json:
+                print(f"{icon}: {md}{extra}")
         except SyncError as e:
-            results.append({"status": "error", "file": md})
-            print(f"❌ {md}: {e}")
+            results.append({"status": "error", "file": md, "error": str(e)})
+            print(f"❌ {md}: {e}", file=sys.stderr if args.json else sys.stdout)
     if args.json:
-        print(json.dumps(results, ensure_ascii=False, indent=1))
+        print(json.dumps(results, ensure_ascii=False, indent=2))
     return 0 if all(r.get("status") != "error" for r in results) else 1
 
 
 def cmd_status(args):
     cfg = load_config()
-    engine = _engine(cfg)
+    # This command is explicitly local/offline and must not require API credentials.
+    engine = _engine(cfg, require_api=False)
     for md in _iter_md(args.target):
         st = engine.status(md)
         print(f"{st['status']:10s} {md} — {st.get('detail', '')}")
@@ -101,25 +106,40 @@ def cmd_status(args):
 def cmd_pull(args):
     cfg = load_config()
     engine = _engine(cfg)
+    had_errors = False
     for md in _iter_md(args.target):
         try:
             engine.pull_meta(md)
         except SyncError as e:
-            print(f"❌ {md}: {e}")
+            had_errors = True
+            print(f"❌ {md}: {e}", file=sys.stderr)
+    return 1 if had_errors else 0
 
 
 def cmd_unpublish(args):
     cfg = load_config()
     engine = _engine(cfg)
-    post = frontmatter.load(args.target)
-    wagtail_id = post.get("wagtail_id")
+    article = Article(args.target)
+    wagtail_id = article.post.get("wagtail_id")
     if not wagtail_id:
-        print("❌ Статья не привязана к Wagtail")
+        print("❌ Статья не привязана к Wagtail", file=sys.stderr)
         return 1
-    engine.api.unpublish_page(int(wagtail_id))
-    post["published"] = False
-    with open(args.target, "wb") as fh:
-        frontmatter.dump(post, fh)
+
+    was_clean = article.post.get("content_hash") == article.content_hash(
+        article.title, article.post.get("excerpt") or ""
+    )
+    try:
+        engine.api.unpublish_page(int(wagtail_id))
+    except SyncError as exc:
+        print(f"❌ Не удалось снять статью с публикации: {exc}", file=sys.stderr)
+        return 1
+
+    article.post["published"] = False
+    if was_clean:
+        article.post["content_hash"] = article.content_hash(
+            article.title, article.post.get("excerpt") or ""
+        )
+    article.save()
     print(f"⬇️ снята с публикации (id {wagtail_id})")
     return 0
 
