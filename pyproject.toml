@@ -4,7 +4,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "wagtail-desktop-publisher"
-version = "0.3.1"
+version = "0.3.2"
 description = "Desktop Markdown publisher and image synchronizer for Wagtail CMS."
 readme = "README.md"
 authors = [{ name = "Vladimir Tarasov" }]
@@ -14,6 +14,7 @@ dependencies = [
     "python-frontmatter>=1.0",
     "markdown>=3.5",
     "customtkinter>=5.2",
+    "markdownify>=0.13",
 ]
 
 [project.scripts]

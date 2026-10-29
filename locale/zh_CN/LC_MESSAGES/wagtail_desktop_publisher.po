@@ -2,6 +2,27 @@ msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 
+msgid "Browse…"
+msgstr "浏览…"
+
+msgid "Filter"
+msgstr "筛选"
+
+msgid "Categories of the selected site (shared Wagtail tree)"
+msgstr "所选站点的分类"
+
+msgid "Main image = first article image unless picked below (after Scan)"
+msgstr "主图 = 文章第一张图片"
+
+msgid "Find on site (by title)"
+msgstr "站内查找"
+
+msgid "Save as .md"
+msgstr "保存为 .md"
+
+msgid "Nothing found"
+msgstr "未找到"
+
 msgid "Wagtail Desktop Publisher"
 msgstr "Wagtail Desktop Publisher"
 

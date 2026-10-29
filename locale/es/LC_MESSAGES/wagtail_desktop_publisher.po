@@ -2,6 +2,27 @@ msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 
+msgid "Browse…"
+msgstr "Examinar…"
+
+msgid "Filter"
+msgstr "Filtro"
+
+msgid "Categories of the selected site (shared Wagtail tree)"
+msgstr "Categorías del sitio"
+
+msgid "Main image = first article image unless picked below (after Scan)"
+msgstr "Imagen principal = primera imagen del artículo"
+
+msgid "Find on site (by title)"
+msgstr "Buscar en el sitio"
+
+msgid "Save as .md"
+msgstr "Guardar como .md"
+
+msgid "Nothing found"
+msgstr "Sin resultados"
+
 msgid "Wagtail Desktop Publisher"
 msgstr "Wagtail Desktop Publisher"
 

@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 
 import customtkinter as ctk
 import frontmatter
+import tkinter.filedialog as filedialog
+from markdownify import markdownify as html_to_md
 
 from wagtail_desktop_publisher.core.config import (
     load_config, load_site_cache, save_config, save_site_cache,
@@ -36,7 +39,7 @@ class PublisherApp(ctk.CTk):
         self.geometry("980x720")
         self.minsize(880, 640)
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(5, weight=1)
+        self.grid_rowconfigure(6, weight=1)
 
         self.cfg = dict(CFG)
         self.api: WagtailAPI | None = None
@@ -95,8 +98,11 @@ class PublisherApp(ctk.CTk):
         self.path_in.insert(0, self.article_path)
         self.path_in.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10)
         self.path_in.bind("<Return>", lambda _e: self._scan())
-        ctk.CTkButton(art, text=_("Scan"), width=90, command=self._scan).grid(
-            row=1, column=2, padx=8)
+        btn_row = ctk.CTkFrame(art, fg_color="transparent")
+        btn_row.grid(row=1, column=2, padx=8)
+        ctk.CTkButton(btn_row, text=_("Browse…"), width=80,
+                      command=self._browse).pack(side="left", padx=2)
+        ctk.CTkButton(btn_row, text=_("Scan"), width=70, command=self._scan).pack(side="left", padx=2)
 
         ctk.CTkLabel(art, text=_("Title")).grid(row=2, column=0, sticky="w", padx=10, pady=4)
         self.title_in = ctk.CTkEntry(art, width=340)
@@ -121,17 +127,72 @@ class PublisherApp(ctk.CTk):
         self.publish_var = ctk.BooleanVar(value=bool(self.cfg.get("last_published", False)))
         ctk.CTkSwitch(opts, text=_("Publish immediately (otherwise save as draft)"),
                       variable=self.publish_var).pack(side="left", padx=10)
-        ctk.CTkLabel(opts, text=f"{_('Language')}: {self._lang_label()}").pack(side="right", padx=10)
+        lang_menu = ctk.CTkOptionMenu(
+            opts, width=90,
+            values=[name for _c, name in SUPPORTED_LANGUAGES],
+            command=lambda ch: self._change_language_by_name(ch))
+        current_code = LANG or (os.environ.get("LANG", "en")[:2])
+        for _c, name in SUPPORTED_LANGUAGES:
+            if _c == current_code:
+                lang_menu.set(name)
+        lang_menu.pack(side="right", padx=10)
+
+        # --- поиск уже опубликованных статей ---
+        find_card = ctk.CTkFrame(self)
+        find_card.grid(row=4, column=0, sticky="ew", padx=12, pady=6)
+        find_card.grid_columnconfigure(0, weight=1)
+        self.find_in = ctk.CTkEntry(find_card, placeholder_text=_("Find on site (by title)"))
+        self.find_in.grid(row=0, column=0, sticky="ew", padx=8, pady=6)
+        self.found_box = ctk.CTkComboBox(find_card, values=[], width=430, state="readonly")
+        self.found_box.grid(row=1, column=0, sticky="ew", padx=8)
+        self._found_pages = []
+
+        def do_find():
+            if not self.api:
+                return
+            resp = self.api.pages(search=self.find_in.get().strip(), type=PAGE_TYPE, limit=30)
+            self._found_pages = resp.get("items", [])
+            self.found_box.configure(values=[
+                f"{p['id']} | {p['title']}" for p in self._found_pages] or [_("Nothing found")])
+            self.found_box.set(self.found_box.cget("values")[0] if self._found_pages else "—")
+
+        def do_save_md():
+            if not self._found_pages:
+                return
+            idx = max(0, self.found_box.cget("values").index(self.found_box.get()) if self.found_box.get() in self.found_box.cget("values") else 0)
+            page = self._found_pages[idx] if idx < len(self._found_pages) else None
+            if not page:
+                return
+            detail = self.api.get_page(page["id"])
+            slug = detail.get("slug", f"page-{page['id']}")
+            body = detail.get("body")
+            html = body.get("content") if isinstance(body, dict) else str(body or "")
+            md = html_to_md(html)
+            d = os.path.join(os.path.expanduser("~/articles"), slug)
+            os.makedirs(d, exist_ok=True)
+            post = frontmatter.Post(md, **{
+                "title": detail.get("title", ""), "slug": slug,
+                "wagtail_id": page["id"], "published": True,
+            })
+            path = os.path.join(d, "index.md")
+            with open(path, "w", encoding="utf-8") as fh:
+                frontmatter.dump(post, fh)
+            self.path_in.delete(0, "end")
+            self.path_in.insert(0, path)
+            self._scan()
+            self._log(f"⬇️ сохранено: {path} (теперь можно править и publish)")
+
+        ctk.CTkButton(find_card, text=_("Save as .md"), command=do_save_md).grid(row=2, column=0, padx=8, pady=4, sticky="w")
 
         # --- кнопка ---
         self.sync_btn = ctk.CTkButton(self, text=_("Sync article to Wagtail"),
                                       height=42, command=self._sync)
-        self.sync_btn.grid(row=4, column=0, sticky="ew", padx=12, pady=8)
+        self.sync_btn.grid(row=5, column=0, sticky="ew", padx=12, pady=8)
 
         # --- табы: мета (рубрики/теги/главная картинка) и лог ---
         self.tabs = ctk.CTkTabview(self)
-        self.tabs.grid(row=5, column=0, sticky="nsew", padx=12, pady=(0, 12))
-        self.grid_rowconfigure(5, weight=1)
+        self.tabs.grid(row=6, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        self.grid_rowconfigure(6, weight=1)
         self.tabs.add(_("Meta"))
         self.tabs.add("Log")
 
@@ -139,7 +200,10 @@ class PublisherApp(ctk.CTk):
         self.meta_refresh = ctk.CTkButton(meta_tab, text="↻", width=34,
                                           command=self._refresh_meta)
         self.meta_refresh.place(relx=0.965, rely=0.02)
-        ctk.CTkLabel(meta_tab, text=_("Categories")).pack(anchor="w", padx=8, pady=(6, 2))
+        ctk.CTkLabel(meta_tab, text=_("Categories of the selected site (shared Wagtail tree)")).pack(anchor="w", padx=8, pady=(6, 2))
+        self.cat_filter = ctk.CTkEntry(meta_tab, placeholder_text=_("Filter"), width=200)
+        self.cat_filter.pack(anchor="w", padx=8, pady=2)
+        self.cat_filter.bind("KeyRelease", lambda _e: self._render_categories())
         self.cat_frame = ctk.CTkScrollableFrame(meta_tab, height=160)
         self.cat_frame.pack(fill="both", expand=True, padx=8)
         ctk.CTkLabel(meta_tab, text=_("Tags")).pack(anchor="w", padx=8, pady=(8, 2))
@@ -151,7 +215,9 @@ class PublisherApp(ctk.CTk):
         ctk.CTkLabel(meta_tab, text="Main image").pack(anchor="w", padx=8, pady=(8, 2))
         self.main_image_box = ctk.CTkComboBox(meta_tab, values=["(auto)"], width=430)
         self.main_image_box.set("(auto)")
-        self.main_image_box.pack(fill="x", padx=8, pady=(0, 8))
+        self.main_image_box.pack(fill="x", padx=8, pady=(0, 2))
+        ctk.CTkLabel(meta_tab, text=_("Main image = first article image unless picked below (after Scan)"),
+                     text_color="grey", wraplength=420, justify="left").pack(anchor="w", padx=8, pady=(0, 6))
 
         log_tab = self.tabs.tab("Log")
         self.log_box = ctk.CTkTextbox(log_tab)
@@ -204,16 +270,26 @@ class PublisherApp(ctk.CTk):
 
     # ---------------- мета: рубрики и теги ----------------
 
-    def _populate_meta(self, categories, tags):
+    def _render_categories(self):
         for w in self.cat_frame.winfo_children():
             w.destroy()
         self._cat_vars = []
-        for cat in categories:
+        flt = self.cat_filter.get().strip().lower() if hasattr(self, "cat_filter") else ""
+        for cat in getattr(self, "_all_categories", []):
+            name = cat["name"]
+            if flt and flt not in name.lower():
+                continue
             var = ctk.BooleanVar(value=False)
             indent = "    " * (cat.get("level") or 0)
-            box = ctk.CTkCheckBox(self.cat_frame, text=indent + cat["name"], variable=var)
+            box = ctk.CTkCheckBox(self.cat_frame, text=indent + name, variable=var)
             box.pack(anchor="w", padx=4, pady=1)
             self._cat_vars.append((cat["id"], var))
+
+    def _populate_meta(self, categories, tags):
+        for w in self.cat_frame.winfo_children():
+            w.destroy()
+        self._all_categories = categories
+        self._render_categories()
         self._tag_names = [t["name"] for t in tags]
         self.tags_box.configure(values=self._tag_names)
         if not categories:
@@ -258,6 +334,14 @@ class PublisherApp(ctk.CTk):
         new_value = (prefix.rstrip() + ", " if prefix.strip() else "") + chosen + ", "
         self.tags_box.set(new_value)
         self.tags_box.configure(values=self._tag_names)
+
+    def _browse(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("Markdown", "*.md"), ("All files", "*.*")])
+        if path:
+            self.path_in.delete(0, "end")
+            self.path_in.insert(0, path)
+            self._scan()
 
     # ---------------- подключение ----------------
 
@@ -366,10 +450,13 @@ class PublisherApp(ctk.CTk):
         threading.Thread(target=worker, daemon=True).start()
 
 
+
+
+
 def main():
     app = PublisherApp()
     app.mainloop()
 
 
-if __name__ == "__main__":
+if __name__ in {"__main__", "__mp_main__"}:
     main()

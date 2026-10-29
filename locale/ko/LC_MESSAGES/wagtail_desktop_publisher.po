@@ -2,6 +2,27 @@ msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 
+msgid "Browse…"
+msgstr "찾아보기…"
+
+msgid "Filter"
+msgstr "필터"
+
+msgid "Categories of the selected site (shared Wagtail tree)"
+msgstr "사이트 카테고리"
+
+msgid "Main image = first article image unless picked below (after Scan)"
+msgstr "대표 이미지 = 첫 번째 이미지"
+
+msgid "Find on site (by title)"
+msgstr "사이트에서 찾기"
+
+msgid "Save as .md"
+msgstr ".md로 저장"
+
+msgid "Nothing found"
+msgstr "찾을 수 없음"
+
 msgid "Wagtail Desktop Publisher"
 msgstr "Wagtail Desktop Publisher"
 
