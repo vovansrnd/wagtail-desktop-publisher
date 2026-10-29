@@ -30,6 +30,17 @@ def _(key: str) -> str:
     return get_translation(LANG)(key)
 
 
+# Обход известного бага CTkScrollableFrame: при скролле колесом обработчик
+# спотыкается о служебные Tcl-объекты и засыпает консоль трейсбеками.
+_orig_check = ctk.CTkScrollableFrame._check_if_valid_scroll
+def _safe_check_if_valid_scroll(self, widget):
+    try:
+        return _orig_check(self, widget)
+    except AttributeError:
+        return False
+ctk.CTkScrollableFrame._check_if_valid_scroll = _safe_check_if_valid_scroll
+
+
 class PublisherApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -51,6 +62,14 @@ class PublisherApp(ctk.CTk):
         self._build()
         if self.cfg.get("token"):
             self.after(300, self._connect)
+
+    def _change_language_by_name(self, name):
+        """Сохранить язык и перезапустить приложение (перевод всех надписей)."""
+        for code, lang_name in SUPPORTED_LANGUAGES:
+            if lang_name == name and code != (LANG or ""):
+                self.cfg["language"] = code
+                save_config(self.cfg)
+                os.execl(sys.executable, sys.executable, *sys.argv)
 
     # ---------------- построение интерфейса ----------------
 
@@ -141,10 +160,13 @@ class PublisherApp(ctk.CTk):
         find_card = ctk.CTkFrame(self)
         find_card.grid(row=4, column=0, sticky="ew", padx=12, pady=6)
         find_card.grid_columnconfigure(0, weight=1)
-        self.find_in = ctk.CTkEntry(find_card, placeholder_text=_("Find on site (by title)"))
+        ctk.CTkLabel(find_card, text=_("Find on site (by title)")).grid(row=0, column=0, sticky="w", padx=8, pady=(6, 0))
+        self.find_in = ctk.CTkEntry(find_card, placeholder_text=_("Title"))
         self.find_in.grid(row=0, column=0, sticky="ew", padx=8, pady=6)
+        ctk.CTkLabel(find_card, text="→ " + _("Save as .md") + " " + chr(8595),
+                     text_color="grey").grid(row=1, column=0, sticky="w", padx=8)
         self.found_box = ctk.CTkComboBox(find_card, values=[], width=430, state="readonly")
-        self.found_box.grid(row=1, column=0, sticky="ew", padx=8)
+        self.found_box.grid(row=2, column=0, sticky="ew", padx=8)
         self._found_pages = []
 
         def do_find():
@@ -182,7 +204,7 @@ class PublisherApp(ctk.CTk):
             self._scan()
             self._log(f"⬇️ сохранено: {path} (теперь можно править и publish)")
 
-        ctk.CTkButton(find_card, text=_("Save as .md"), command=do_save_md).grid(row=2, column=0, padx=8, pady=4, sticky="w")
+        ctk.CTkButton(find_card, text=_("Save as .md"), command=do_save_md).grid(row=3, column=0, padx=8, pady=4, sticky="w")
 
         # --- кнопка ---
         self.sync_btn = ctk.CTkButton(self, text=_("Sync article to Wagtail"),
