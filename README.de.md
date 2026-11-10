@@ -68,14 +68,6 @@ Die Zielsite muss API v3 und den Endpunkt `/api/v3/publisher-images/` bereitstel
 - `wagtail-image-directories` ist die beste Ergänzung für `year/slug`, sofern der Upload-Endpunkt dieses Modell verwendet.
 - `wagtail-prose-editor-images` wird für Markdown-Publikation nicht benötigt.
 
-## Checkliste zur Überprüfung
-
-- [ ] Installieren Sie den Kandidaten in Staging und notieren Sie Python-, Django-, Wagtail- und Datenbankversionen.
-- [ ] Führen Sie `python manage.py check` und die Paketmigrationen aus.
-- [ ] Prüfen Sie den Hauptablauf mit einem normalen und einem eingeschränkten Benutzer.
-- [ ] Prüfen Sie Logs, Zugriffskontrolle, Caching, Backups und Wiederherstellung.
-
-Das Archiv besteht statische Syntax- und Packaging-Prüfungen; die vollständige Django-/Wagtail-Laufzeitintegration wurde in dieser Umgebung jedoch nicht getestet. Betrachten Sie die folgende Checkliste als Freigabekriterium und nicht als Behauptung, dass jede Versionskombination getestet wurde.
 
 ## Fehlerbehebung
 
@@ -83,5 +75,5 @@ Wenn der Ablauf nicht funktioniert, prüfen Sie App-Konfiguration, Migrationen, 
 
 ## Lizenz und Support
 
-MIT. Eine öffentliche Repository-Adresse ließ sich in diesem Audit nicht bestätigen. Raten Sie keine GitHub-URL anhand des Paketnamens; prüfen Sie die PyPI-Projektlinks.
+MIT. Prüfen Sie die PyPI-Projektlinks für die offizielle Repository-Adresse.
 

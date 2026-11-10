@@ -83,5 +83,5 @@ Se il flusso non funziona, controlla configurazione dell’app, migrazioni, ordi
 
 ## Licenza e supporto
 
-MIT. Non è stato possibile confermare l’URL pubblico del repository durante questo audit. Non indovinare un URL GitHub; verifica i collegamenti PyPI.
+MIT. Verifica i collegamenti PyPI per l’URL ufficiale del repository.
 

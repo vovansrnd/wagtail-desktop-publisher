@@ -206,9 +206,10 @@ class WagtailAPI:
             raise SyncError(f"unpublish → HTTP {resp.status_code}: {resp.text[:300]}")
         return True
 
-    def get_page(self, page_id):
+    def get_page(self, page_id, page_type="blog.BlogPage"):
+        # page_type параметризован (Д66): чужой проект публикует в свой тип
         resp = self.session.get(
-            self._url(f"pages/{page_id}/"), params={"type": "blog.BlogPage"}, timeout=self.timeout
+            self._url(f"pages/{page_id}/"), params={"type": page_type}, timeout=self.timeout
         )
         if resp.status_code != 200:
             raise SyncError(f"pages/{page_id} → HTTP {resp.status_code}")
@@ -423,7 +424,7 @@ class SyncEngine:
         wagtail_id = article.post.get("wagtail_id")
         if not wagtail_id:
             raise SyncError("Статья не привязана к Wagtail (нет wagtail_id)")
-        page = self.api.get_page(int(wagtail_id))
+        page = self.api.get_page(int(wagtail_id), page_type=self.page_type)
         meta = page.get("meta", {}) or {}
         article.post["title"] = page.get("title", article.title)
         article.post["slug"] = page.get("slug", article.slug)

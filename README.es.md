@@ -83,5 +83,5 @@ Si el flujo no funciona, revisa la configuración de la app, las migraciones, el
 
 ## Licencia y soporte
 
-MIT. No se pudo confirmar una dirección pública del repositorio durante esta auditoría. No inventes una URL de GitHub a partir del nombre del paquete; comprueba los enlaces de PyPI.
+MIT. Comprueba los enlaces de PyPI para la dirección oficial del repositorio.
 

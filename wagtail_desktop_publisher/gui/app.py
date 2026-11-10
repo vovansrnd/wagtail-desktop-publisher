@@ -185,7 +185,8 @@ class PublisherApp(ctk.CTk):
             page = self._found_pages[idx] if idx < len(self._found_pages) else None
             if not page:
                 return
-            detail = self.api.get_page(page["id"])
+            detail = self.api.get_page(
+                page["id"], page_type=self.cfg.get("page_type", PAGE_TYPE))
             slug = detail.get("slug", f"page-{page['id']}")
             body = detail.get("body")
             html = body.get("content") if isinstance(body, dict) else str(body or "")
@@ -228,6 +229,10 @@ class PublisherApp(ctk.CTk):
         self.cat_filter.bind("KeyRelease", lambda _e: self._render_categories())
         self.cat_frame = ctk.CTkScrollableFrame(meta_tab, height=160)
         self.cat_frame.pack(fill="both", expand=True, padx=8)
+        # Д66: статус-лейбл вместо CTkScrollableFrame.configure(label=...) —
+        # customtkinter 6.0 не поддерживает label в configure (ValueError)
+        self.cat_status = ctk.CTkLabel(meta_tab, text="")
+        self.cat_status.pack(anchor="w", padx=8)
         ctk.CTkLabel(meta_tab, text=_("Tags")).pack(anchor="w", padx=8, pady=(8, 2))
         self.tags_box = ctk.CTkComboBox(meta_tab, values=[], width=430)
         self.tags_box.set("")
@@ -315,7 +320,9 @@ class PublisherApp(ctk.CTk):
         self._tag_names = [t["name"] for t in tags]
         self.tags_box.configure(values=self._tag_names)
         if not categories:
-            self.cat_frame.configure(label="—")
+            self.cat_status.configure(text="—")
+        else:
+            self.cat_status.configure(text="")
 
     def _load_meta(self, force):
         site = self.cfg.get("site", "")

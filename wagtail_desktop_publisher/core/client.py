@@ -1,3 +1,6 @@
+# DEPRECATED (Д66): этот клиент не используется entry points — CLI и GUI
+# работают через core/sync.py (SyncEngine). Сохранён для совместимости;
+# новые интеграции использовать core/sync.py и wagtail_api.py.
 import os
 import re
 import datetime

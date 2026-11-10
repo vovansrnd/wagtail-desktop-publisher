@@ -19,9 +19,6 @@ The local Markdown document remains editable: relative image paths are preserved
 - GUI with OS dark/light appearance, site/parent selection from the API, scan-and-sync flow, background network operations, logs, and 13 UI locales.
 - Configuration stored in `~/.wagtail_publisher.json` with owner-only file permissions and atomic replacement.
 
-## Audit/release status
-
-
 ## Requirements
 
 The package depends on `requests`, `python-frontmatter`, `markdown`, and `customtkinter`. It targets Wagtail's v3 API with write support. The original package documentation states Wagtail 7.0+ and reports verification against Wagtail 8.0; do not treat that as a guarantee for every later version. Verify the API endpoints and writable fields on your site before production use.

@@ -83,5 +83,5 @@ Si le flux ne fonctionne pas, vérifiez la configuration de l’application, les
 
 ## Licence et assistance
 
-MIT. L’adresse publique du dépôt n’a pas pu être confirmée lors de cet audit. N’inventez pas d’URL GitHub ; vérifiez les liens du projet sur PyPI.
+MIT. Consultez les liens du projet sur PyPI pour l’adresse officielle du dépôt.
 

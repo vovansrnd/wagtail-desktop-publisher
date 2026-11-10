@@ -83,5 +83,5 @@ Se o fluxo não funcionar, confira a configuração do app, migrações, ordem d
 
 ## Licença e suporte
 
-MIT. Não foi possível confirmar o endereço público do repositório nesta auditoria. Não invente uma URL do GitHub; confira os links no PyPI.
+MIT. Confira os links do PyPI para o endereço oficial do repositório.
 
