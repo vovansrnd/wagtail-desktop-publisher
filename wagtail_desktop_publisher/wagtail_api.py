@@ -16,7 +16,11 @@ api.urls)::
         ...
     ]
 
-Эндпоинты (аутентификация — BearerTokenAuth, токены Wagtail APIToken):
+Эндпоинты: авторизация ЯВНО задана на каждом роутере через
+BearerTokenAuth (токены Wagtail APIToken). Полагаться на глобальный auth
+NinjaAPI нельзя: Wagtail создаёт api без глобального auth, штатные
+read-endpoints Wagtail публичны по умолчанию — это поведение не
+распространяется на кастомные маршруты publisher'а.
 - POST /api/v3/images/                 — загрузка изображения в каталог
   year/slug: на сайте с wagtail-image-directories (поля year/slug у
   модели изображений + get_or_create_collection) используется схема
@@ -222,6 +226,7 @@ def upload_image(
     "/categories/",
     operation_id="publisher_categories",
     summary="Рубрики сайта (id, имя, родитель, уровень)",
+    auth=BearerTokenAuth(),
 )
 def categories(request):
     try:
@@ -244,6 +249,7 @@ def categories(request):
     "/tags/",
     operation_id="publisher_tags",
     summary="Теги сайта (поиск для автодополнения)",
+    auth=BearerTokenAuth(),
 )
 def tags(request, search: str = None, limit: int = 50):
     from taggit.models import Tag
