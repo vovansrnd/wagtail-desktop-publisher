@@ -1,0 +1,18 @@
+### Пометка агента — команды (не часть stdout):
+### Сборка: python -m build --outdir /tmp/wdp_build . (HEAD e1593ba449604093e2ab57272fe59e4eae096413)
+### Установка: pip install --no-cache-dir <wheel> + пины целевого стека Django==6.0.9 Wagtail==8.1.0
+### Запуск: PYTHONUNBUFFERED=1 <clean-wdp-venv>/bin/python tests/runtests.py (sqlite :memory:)
+### Проверка артефактов: 0 pycache/pyc в wheel и sdist; wagtail_api.py и locale/ присутствуют
+=== FINAL WHEEL SUITE: HEAD e1593ba449604093e2ab57272fe59e4eae096413 / wheel SHA256 e2eff9dfe3cfceac6b7d99dfbbd23cff8e0d549758fdc188760ce1d319685d9d / Python Python 3.14.4 / Django 6.0.9 / Wagtail (8, 1, 0, 'final', 1) / SQLite (:memory:, tmp MEDIA_ROOT) ===
+=== Тестируется H1: явная BearerTokenAuth на publisher-meta роутерах; 4 локальных коммита 0.3.4 сохранены в истории ветки ===
+проверяемый пакет (wheel): /opt/MyApps/wagtail/d67-release-audit/clean-wdp-venv/lib/python3.14/site-packages/wagtail_desktop_publisher/__init__.py
+Found 12 test(s).
+Creating test database for alias 'default'...
+System check identified no issues (0 silenced).
+............
+----------------------------------------------------------------------
+Ran 12 tests in 12.510s
+
+OK
+Destroying test database for alias 'default'...
+=== EXIT=0 ===
