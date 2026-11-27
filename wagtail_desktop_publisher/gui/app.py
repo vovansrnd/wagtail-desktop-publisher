@@ -18,6 +18,7 @@ from markdownify import markdownify as html_to_md
 from wagtail_desktop_publisher.core.config import (
     load_config, load_site_cache, save_config, save_site_cache,
 )
+from wagtail_desktop_publisher.core.paths import resolve_export_path
 from wagtail_desktop_publisher.core.sync import Article, SyncEngine, SyncError, WagtailAPI
 from wagtail_desktop_publisher.i18n import SUPPORTED_LANGUAGES, get_translation
 
@@ -191,7 +192,15 @@ class PublisherApp(ctk.CTk):
             body = detail.get("body")
             html = body.get("content") if isinstance(body, dict) else str(body or "")
             md = html_to_md(html)
-            d = os.path.join(os.path.expanduser("~/articles"), slug)
+            # M3: slug контролируется сервером — путь строится через
+            # безопасное разрешение; отказ = ничего не записано
+            try:
+                d = resolve_export_path(
+                    slug, os.path.join(os.path.expanduser("~"), "articles")
+                )
+            except ValueError as e:
+                self._log(f"❌ экспорт отменён: {e}")
+                return
             os.makedirs(d, exist_ok=True)
             post = frontmatter.Post(md, **{
                 "title": detail.get("title", ""), "slug": slug,
