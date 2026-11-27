@@ -55,23 +55,33 @@ def _excluded_code_spans(text):
     fence_char = None
     fence_len = 0
     for line in text.splitlines(keepends=True):
+        # CommonMark: fenced block допускает отступ максимум в 3 пробела;
+        # строка с 4+ пробелами — indented code block, а не фенс.
+        indent = len(line) - len(line.lstrip(" "))
         stripped = line.lstrip(" ")
         if fence_char is None:
-            m = _FENCE_RE.match(stripped)
-            if m:
-                marker, info = m.group(1), m.group(2) or ""
-                # бэктик-фенс с ` в инфостроке не открывается (CommonMark)
-                if not (marker[0] == "`" and "`" in info):
-                    fence_char, fence_len = marker[0], len(marker)
-                    spans.append((offset, offset + len(line)))
+            if indent >= 4:
+                # содержимое indented code block — image-токены строки
+                # исключаются целиком
+                spans.append((offset, offset + len(line)))
             else:
-                for cm in _INLINE_CODE_RE.finditer(line):
-                    spans.append((offset + cm.start(), offset + cm.end()))
+                m = _FENCE_RE.match(stripped)
+                if m:
+                    marker, info = m.group(1), m.group(2) or ""
+                    # бэктик-фенс с ` в инфостроке не открывается (CommonMark)
+                    if not (marker[0] == "`" and "`" in info):
+                        fence_char, fence_len = marker[0], len(marker)
+                        spans.append((offset, offset + len(line)))
+                else:
+                    for cm in _INLINE_CODE_RE.finditer(line):
+                        spans.append((offset + cm.start(), offset + cm.end()))
         else:
             spans.append((offset, offset + len(line)))
-            m = re.match(r"(`{3,}|~{3,})[ \t]*$", stripped)
-            if m and m.group(1)[0] == fence_char and len(m.group(1)) >= fence_len:
-                fence_char = None
+            # закрывающий фенс — тоже максимум 3 пробела отступа
+            if indent <= 3:
+                m = re.match(r"(`{3,}|~{3,})[ \t]*$", stripped)
+                if m and m.group(1)[0] == fence_char and len(m.group(1)) >= fence_len:
+                    fence_char = None
         offset += len(line)
     return spans
 
@@ -106,6 +116,10 @@ def iter_image_destinations(text):
     def excluded_at(start, end):
         return any(s <= start and end <= e for s, e in excluded)
 
+    # Единый набор токенов (Issue #6): inline, full/collapsed и shortcut
+    # собираются вместе и сортируются по исходной позиции — потребитель
+    # replace_image_destinations() предполагает монотонно возрастающие span'ы.
+    tokens = []
     for m in IMAGE_TOKEN_RE.finditer(text):
         if excluded_at(*m.span()):
             continue
@@ -115,7 +129,8 @@ def iter_image_destinations(text):
         else:
             inner_start, inner_end = m.span("plain")
             dest = m.group("plain")
-        yield m.start(), m.end(), inner_start, inner_end, dest, "inline", m.group("alt")
+        tokens.append((m.start(), m.end(), inner_start, inner_end, dest,
+                       "inline", m.group("alt")))
 
     for m in _REF_IMAGE_RE.finditer(text):
         if excluded_at(*m.span()):
@@ -125,7 +140,8 @@ def iter_image_destinations(text):
         if not dest:
             continue
         dest = dest[1:-1] if dest.startswith("<") and dest.endswith(">") else dest
-        yield m.start(), m.end(), m.start(), m.end(), dest, "ref", m.group("alt")
+        tokens.append((m.start(), m.end(), m.start(), m.end(), dest,
+                       "ref", m.group("alt")))
 
     for m in _SHORTCUT_IMAGE_RE.finditer(text):
         if excluded_at(*m.span()):
@@ -135,7 +151,20 @@ def iter_image_destinations(text):
         if not dest:
             continue
         dest = dest[1:-1] if dest.startswith("<") and dest.endswith(">") else dest
-        yield m.start(), m.end(), m.start(), m.end(), dest, "ref", m.group("alt")
+        tokens.append((m.start(), m.end(), m.start(), m.end(), dest,
+                       "ref", m.group("alt")))
+
+    # строгий порядок по позиции; пересекающиеся/дублирующие матчи
+    # отбрасываются (токен с более ранним началом имеет приоритет)
+    tokens.sort(key=lambda tk: (tk[0], tk[1]))
+    accepted = []
+    last_end = -1
+    for tk in tokens:
+        if tk[0] < last_end:
+            continue
+        accepted.append(tk)
+        last_end = tk[1]
+    yield from accepted
 
 
 def replace_image_destinations(text, url_for):
@@ -188,12 +217,27 @@ class SyncResult(dict):
         return self.get("status") in ("created", "updated", "skipped")
 
 
+def _raw_body_after_frontmatter(text):
+    """Тело файла после frontmatter-разделителя БЕЗ strip: python-frontmatter
+    делает content.strip(), из-за чего отступ начала тела (например,
+    indented code block с ```) терялся и scanner не видел истинные отступы."""
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
+        return text
+    for i in range(1, len(lines)):
+        if lines[i].rstrip("\r\n") == "---":
+            return "".join(lines[i + 1:])
+    return text
+
+
 class Article:
     """Обёртка над .md файлом: frontmatter + путь."""
 
     def __init__(self, path):
         self.path = os.path.abspath(path)
         self.base_dir = os.path.dirname(self.path)
+        with open(self.path, encoding="utf-8") as fh:
+            self.raw_body = _raw_body_after_frontmatter(fh.read())
         self.post = frontmatter.load(self.path)
 
     @property
@@ -277,7 +321,7 @@ class Article:
         внутри код-блоков и inline code игнорируются (M4)."""
         base = os.path.realpath(self.base_dir)
         found = []
-        for _fs, _fe, _is, _ie, rel, _mode, _alt in iter_image_destinations(self.post.content):
+        for _fs, _fe, _is, _ie, rel, _mode, _alt in iter_image_destinations(self.raw_body):
             if rel.lower().startswith(_LOCAL_SKIP):
                 continue
             candidate = os.path.realpath(os.path.join(self.base_dir, rel))
