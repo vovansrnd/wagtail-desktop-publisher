@@ -57,6 +57,7 @@ De doelsite moet API v3 en `/api/v3/publisher-images/` aanbieden; dit uploadendp
 
 ## Beveiliging en beheer
 
+- Een ontbrekend of ontoegankelijk lokaal afbeeldingsbestand breekt de synchronisatie vóór elke API-aanroep af (fail closed): kapotte afbeeldingslinks worden niet gepubliceerd. Het bronpakket bevat de functionele regressiontestsuite (`tests/runtests.py`; geverifieerd op Python 3.14.4 / Django 6.0.9 / Wagtail 8.1 — niet alle `wagtail>=6.0`-combinaties).
 - Houd afhankelijkheden bijgewerkt. Gebruik voor door gebruikers geschreven HTML het bedoelde opschonings- en renderpad; geef opgeslagen reacties of forumberichten niet onvoorwaardelijk weer met `|safe`.
 - Controleer migraties en rechten met gewone, beperkte gebruikers, moderators en beheerders.
 - Test bij meerdere sites elk ingesteld domein en een onbekende host. Als geen Site wordt gevonden, mag een query niet worden verbreed naar records van alle sites.

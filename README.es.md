@@ -57,6 +57,7 @@ El sitio de destino debe exponer API v3 y `/api/v3/publisher-images/`; este endp
 
 ## Seguridad y operación
 
+- Un archivo de imagen local ausente o inaccesible interrumpe la sincronización antes de cualquier llamada a la API (fail closed): no se publican enlaces rotos. El paquete fuente incluye la suite de pruebas de regresión (`tests/runtests.py`; verificado en Python 3.14.4 / Django 6.0.9 / Wagtail 8.1 — no todas las combinaciones de `wagtail>=6.0`).
 - Mantén las dependencias actualizadas. Para HTML escrito por usuarios, utiliza la limpieza y representación previstas; no muestres comentarios o publicaciones almacenadas con `|safe` incondicional.
 - Comprueba migraciones y permisos con usuarios normales, restringidos, moderadores y administradores.
 - En instalaciones multisitio, prueba cada dominio configurado y un host desconocido. Si no se encuentra un Site, la consulta nunca debe ampliarse a todos los sitios.

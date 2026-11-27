@@ -57,6 +57,7 @@ Die Zielsite muss API v3 und den Endpunkt `/api/v3/publisher-images/` bereitstel
 
 ## Sicherheit und Betrieb
 
+- Eine fehlende oder unzugängliche lokale Bilddatei bricht die Synchronisierung vor allen API-Aufrufen ab (fail closed) — kaputte Bildlinks werden nicht veröffentlicht. Das Quellpaket enthält die Regressionstestsuite (`tests/runtests.py`; geprüft auf Python 3.14.4 / Django 6.0.9 / Wagtail 8.1 — nicht alle `wagtail>=6.0`-Kombinationen).
 - Halten Sie Abhängigkeiten aktuell. Verwenden Sie für nutzererstelltes HTML den vorgesehenen Bereinigungs- und Ausgabepfad; geben Sie gespeicherte Kommentare oder Forenbeiträge nicht bedingungslos mit `|safe` aus.
 - Prüfen Sie Migrationen und Berechtigungen mit normalen, eingeschränkten Benutzern, Moderatoren und Administratoren.
 - Testen Sie bei mehreren Wagtail-Sites jede konfigurierte Domain sowie einen unbekannten Host. Wenn keine Site gefunden wird, darf eine Abfrage nicht auf Datensätze aller Sites erweitert werden.
