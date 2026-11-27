@@ -151,7 +151,10 @@ class ExportPathTests(unittest.TestCase):
 # ==========================================================================
 class ImageTokenTests(unittest.TestCase):
     def _dests(self, content):
-        return [dest for _fs, _fe, _is, _ie, dest in iter_image_destinations(content)]
+        return [
+            dest for _fs, _fe, _is, _ie, dest, _mode, _alt
+            in iter_image_destinations(content)
+        ]
 
     def test_plain_and_quoted_title(self):
         dests = self._dests(

@@ -33,43 +33,81 @@ IMAGE_TOKEN_RE = re.compile(
     r"(?:<(?P<angle>[^>]*)>|(?P<plain>[^)\s]+))"
     r"(?:\s+\"(?P<title>[^\"]*)\")?\s*\)"
 )
-_FENCE_RE = re.compile(r"\s{0,3}(`{3,}|~{3,})")
+_FENCE_RE = re.compile(r"(`{3,}|~{3,})(.*)$")
 _INLINE_CODE_RE = re.compile(r"`+[^`]*`+")
+_REF_DEF_RE = re.compile(
+    r"^\s{0,3}\[(?P<label>[^\]]+)\]:\s*"
+    r"(?:<(?P<angle>[^>]*)>|(?P<plain>\S+))"
+    r'(?:\s+\"(?P<title>[^\"]*)\")?\s*$'
+)
+_REF_IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]]*)\]\[(?P<label>[^\]]*)\]")
+_SHORTCUT_IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]]+)\](?!\[)")
 
 
 def _excluded_code_spans(text):
     """Диапазоны исходного текста, внутри которых image-токены игнорируются:
-    ограждённые код-блоки (``` / ~~~) и inline code span'ы."""
+    ограждённые код-блоки и inline code span'ы. Закрытие фенса — по
+    CommonMark: тот же символ, длина не меньше открывающей, после маркера
+    только пробелы/табуляция; строка с текстом после маркера фенс НЕ
+    закрывает (остаётся содержимым код-блока)."""
     spans = []
     offset = 0
-    fence = None
+    fence_char = None
+    fence_len = 0
     for line in text.splitlines(keepends=True):
         stripped = line.lstrip(" ")
-        if fence is None:
+        if fence_char is None:
             m = _FENCE_RE.match(stripped)
             if m:
-                fence = m.group(1)
-                spans.append((offset, offset + len(line)))
+                marker, info = m.group(1), m.group(2) or ""
+                # бэктик-фенс с ` в инфостроке не открывается (CommonMark)
+                if not (marker[0] == "`" and "`" in info):
+                    fence_char, fence_len = marker[0], len(marker)
+                    spans.append((offset, offset + len(line)))
             else:
                 for cm in _INLINE_CODE_RE.finditer(line):
                     spans.append((offset + cm.start(), offset + cm.end()))
         else:
             spans.append((offset, offset + len(line)))
-            m = _FENCE_RE.match(stripped)
-            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
-                fence = None
+            m = re.match(r"(`{3,}|~{3,})[ \t]*$", stripped)
+            if m and m.group(1)[0] == fence_char and len(m.group(1)) >= fence_len:
+                fence_char = None
         offset += len(line)
     return spans
 
 
+def _parse_definitions(text, excluded):
+    """Словарь reference-определений `[label]: destination` (вне кода);
+    ключ — label в нижнем регистре, значение — destination."""
+    defs = {}
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        m = _REF_DEF_RE.match(line)
+        if m:
+            start, end = offset, offset + len(line)
+            if not any(s <= start and end <= e for s, e in excluded):
+                dest = m.group("angle") if m.group("angle") is not None else m.group("plain")
+                defs[m.group("label").strip().lower()] = dest.strip()
+        offset += len(line)
+    return defs
+
+
 def iter_image_destinations(text):
-    """Yield (full_start, full_end, inner_start, inner_end, dest) для реальных
-    image-ссылок вне кода. inner_* — span destination ВНУТРИ скобок: замена
-    по нему сохраняет alt/title/скобки токена."""
+    """Yield (full_start, full_end, inner_start, inner_end, dest, mode, alt)
+    для реальных image-ссылок вне кода. mode: "inline" — inner_* выделяет
+    destination внутри скобок (замена по нему сохраняет alt/title);
+    "ref" — reference-style image (full/collapsed/shortcut), разрешённая
+    по определениям `[label]: dest`; заменяется весь токен на
+    ![alt](server_url). Ссылка с неизвестным label пропускается
+    (CommonMark рендерит её как текст)."""
     excluded = _excluded_code_spans(text)
+    defs = _parse_definitions(text, excluded)
+
+    def excluded_at(start, end):
+        return any(s <= start and end <= e for s, e in excluded)
+
     for m in IMAGE_TOKEN_RE.finditer(text):
-        start, end = m.span()
-        if any(s <= start and end <= e for s, e in excluded):
+        if excluded_at(*m.span()):
             continue
         if m.group("angle") is not None:
             inner_start, inner_end = m.span("angle")
@@ -77,23 +115,48 @@ def iter_image_destinations(text):
         else:
             inner_start, inner_end = m.span("plain")
             dest = m.group("plain")
-        yield start, end, inner_start, inner_end, dest
+        yield m.start(), m.end(), inner_start, inner_end, dest, "inline", m.group("alt")
+
+    for m in _REF_IMAGE_RE.finditer(text):
+        if excluded_at(*m.span()):
+            continue
+        label = (m.group("label") or m.group("alt") or "").strip().lower()
+        dest = defs.get(label)
+        if not dest:
+            continue
+        dest = dest[1:-1] if dest.startswith("<") and dest.endswith(">") else dest
+        yield m.start(), m.end(), m.start(), m.end(), dest, "ref", m.group("alt")
+
+    for m in _SHORTCUT_IMAGE_RE.finditer(text):
+        if excluded_at(*m.span()):
+            continue
+        label = m.group("alt").strip().lower()
+        dest = defs.get(label)
+        if not dest:
+            continue
+        dest = dest[1:-1] if dest.startswith("<") and dest.endswith(">") else dest
+        yield m.start(), m.end(), m.start(), m.end(), dest, "ref", m.group("alt")
 
 
 def replace_image_destinations(text, url_for):
-    """Возвращает текст, в котором destination каждого image-токена заменён
-    на url_for(dest) (None — токен остаётся как есть). Замена позиционная
-    по inner-span: alt/title сохраняются, одинаковые базовые имена в разных
-    каталогах не пересекаются, код-блоки не затрагиваются."""
+    """Возвращает текст с подставленными server-URL: inline — замена по
+    inner-span (alt/title сохраняются); reference-style — весь токен
+    превращается в ![alt](server_url). Позиционная замена: одинаковые
+    basename в разных каталогах не пересекаются, код-блоки не затрагиваются."""
     out = []
     last = 0
-    for full_start, full_end, inner_start, inner_end, dest in iter_image_destinations(text):
+    for full_start, full_end, inner_start, inner_end, dest, mode, alt in iter_image_destinations(text):
         url = url_for(dest)
         if not url:
             continue
-        out.append(text[last:inner_start])
-        out.append(url)
-        last = inner_end
+        if mode == "inline":
+            out.append(text[last:inner_start])
+            out.append(url)
+            last = inner_end
+        else:
+            out.append(text[last:full_start])
+            out.append(f"![{alt}]({url})")
+            last = full_end
     out.append(text[last:])
     return "".join(out)
 
@@ -214,7 +277,7 @@ class Article:
         внутри код-блоков и inline code игнорируются (M4)."""
         base = os.path.realpath(self.base_dir)
         found = []
-        for _fs, _fe, _is, _ie, rel in iter_image_destinations(self.post.content):
+        for _fs, _fe, _is, _ie, rel, _mode, _alt in iter_image_destinations(self.post.content):
             if rel.lower().startswith(_LOCAL_SKIP):
                 continue
             candidate = os.path.realpath(os.path.join(self.base_dir, rel))
@@ -239,9 +302,30 @@ class WagtailAPI:
 
     def __init__(self, api_url, token, timeout=120):
         self.api_url = api_url.rstrip("/")
+        self._token = token
         self.session = requests.Session()
         self.session.headers["Authorization"] = f"Bearer {token}"
         self.timeout = timeout
+
+    def _redact(self, text):
+        """Убирает configured Bearer token и authorization-like значения из
+        диагностических фрагментов (сервер/WAF может отражать заголовки)."""
+        if not text:
+            return ""
+        text = str(text)
+        if self._token:
+            text = text.replace(self._token, "[REDACTED_TOKEN]")
+        text = re.sub(
+            r"(?i)(authorization\s*[:=]\s*)\S+",
+            r"\1[REDACTED]",
+            text,
+        )
+        text = re.sub(
+            r"(?i)(bearer\s+)[A-Za-z0-9._\-]+",
+            r"\1[REDACTED]",
+            text,
+        )
+        return text
 
     def _url(self, path):
         return f"{self.api_url}/{path.lstrip('/')}"
@@ -261,14 +345,17 @@ class WagtailAPI:
         (заглушки прокси/WAF) → SyncError с content-type и фрагментом
         ≤200 символов. Секреты в текст ошибки не включаются."""
         if resp.status_code not in ok:
+            # Diagnostic excerpt: redacted + capped; строка не содержит
+            # Authorization/token/query-секретов.
+            excerpt = self._redact((resp.text or ""))[:200]
             raise SyncError(
-                f"{operation} → HTTP {resp.status_code}: {(resp.text or '')[:200]}"
+                f"{operation} → HTTP {resp.status_code}: {excerpt!r}"
             )
         try:
             return resp.json()
         except ValueError as exc:
             content_type = resp.headers.get("Content-Type", "unspecified")
-            excerpt = (resp.text or "")[:200]
+            excerpt = self._redact((resp.text or ""))[:200]
             raise SyncError(
                 f"{operation} → HTTP {resp.status_code}: тело не является JSON "
                 f"(content-type: {content_type}), фрагмент: {excerpt!r}"
@@ -346,19 +433,9 @@ class WagtailAPI:
         )
         return self._json(resp, operation)
 
-    @staticmethod
-    def _page_response(resp, mode, operation):
+    def _page_response(self, resp, mode, operation):
         op_label = f"{operation} ({mode})"
-        if resp.status_code not in (200, 201):
-            raise SyncError(f"{op_label} → HTTP {resp.status_code}: {(resp.text or '')[:400]}")
-        try:
-            data = resp.json()
-        except ValueError as exc:
-            content_type = resp.headers.get("Content-Type", "unspecified")
-            raise SyncError(
-                f"{op_label} → HTTP {resp.status_code}: тело не является JSON "
-                f"(content-type: {content_type})"
-            ) from exc
+        data = self._json(resp, op_label, ok=(200, 201))
         return {"id": data.get("id"), "mode": mode, "data": data}
 
 
@@ -411,7 +488,15 @@ class SyncEngine:
         new_map = {}
         uploaded = reused = 0
 
+        seen_rels = set()
         for rel, abs_path in article.local_images():
+            if rel in seen_rels:
+                # повторная ссылка на тот же путь: запись уже посчитана/будет
+                # получена в этой попытке — повторная загрузка недопустима
+                reused += 1
+                continue
+            seen_rels.add(rel)
+
             entry = images_map.get(rel)
             file_hash = _file_sha256(abs_path) if abs_path else None
 
@@ -462,6 +547,11 @@ class SyncEngine:
 
         excerpt = article.post.get("excerpt") or ""
 
+        # M5 (follow-up): префлайт ДО fast-path по content_hash — иначе статья,
+        # синхронизированная прежней версией с content_hash при отсутствующем
+        # файле, навсегда получала бы skipped без проверки (обход fail-closed).
+        self._preflight_local_images(article)
+
         # Store the effective metadata in frontmatter too. Otherwise GUI-selected
         # tags/categories/main image can be sent once and then disappear from the
         # local sync state, while a metadata-only edit is wrongly skipped.
@@ -488,7 +578,6 @@ class SyncEngine:
             log(f"= без изменений, синхронизация не требуется (id {wagtail_id})")
             return SyncResult(status="skipped", id=wagtail_id, mode="без изменений")
 
-        self._preflight_local_images(article)
         payload_content, images_map, img_stats = self._resolve_images(
             article, year, slug, log
         )
