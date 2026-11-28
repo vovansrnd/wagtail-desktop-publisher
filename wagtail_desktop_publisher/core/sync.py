@@ -54,34 +54,47 @@ def _excluded_code_spans(text):
     offset = 0
     fence_char = None
     fence_len = 0
+    # CommonMark: indented code block не может прерывать абзац — он
+    # открывается только после пустой строки (или в начале документа) и
+    # продолжается последующими indented/пустыми строками. Четырёхпробельная
+    # строка внутри абзаца — его продолжение, renderer обрабатывает image
+    # как inline: такие строки НЕ исключаются (Issue #7, п.2).
+    previous_blank_or_start = True
+    previous_was_indented_code = False
     for line in text.splitlines(keepends=True):
-        # CommonMark: fenced block допускает отступ максимум в 3 пробела;
-        # строка с 4+ пробелами — indented code block, а не фенс.
         indent = len(line) - len(line.lstrip(" "))
         stripped = line.lstrip(" ")
-        if fence_char is None:
-            if indent >= 4:
-                # содержимое indented code block — image-токены строки
-                # исключаются целиком
-                spans.append((offset, offset + len(line)))
-            else:
-                m = _FENCE_RE.match(stripped)
-                if m:
-                    marker, info = m.group(1), m.group(2) or ""
-                    # бэктик-фенс с ` в инфостроке не открывается (CommonMark)
-                    if not (marker[0] == "`" and "`" in info):
-                        fence_char, fence_len = marker[0], len(marker)
-                        spans.append((offset, offset + len(line)))
-                else:
-                    for cm in _INLINE_CODE_RE.finditer(line):
-                        spans.append((offset + cm.start(), offset + cm.end()))
-        else:
+        blank = stripped.strip() == ""
+        if fence_char is not None:
             spans.append((offset, offset + len(line)))
-            # закрывающий фенс — тоже максимум 3 пробела отступа
             if indent <= 3:
                 m = re.match(r"(`{3,}|~{3,})[ \t]*$", stripped)
                 if m and m.group(1)[0] == fence_char and len(m.group(1)) >= fence_len:
                     fence_char = None
+        elif indent >= 4:
+            if blank:
+                pass  # пустая строка не содержит токенов
+            elif previous_blank_or_start or previous_was_indented_code:
+                # indented code block (открытие или продолжение)
+                spans.append((offset, offset + len(line)))
+                previous_was_indented_code = True
+            else:
+                # продолжение абзаца: image-токены строки НЕ исключаются
+                for cm in _INLINE_CODE_RE.finditer(line):
+                    spans.append((offset + cm.start(), offset + cm.end()))
+        else:
+            previous_was_indented_code = False
+            m = _FENCE_RE.match(stripped)
+            if m:
+                marker, info = m.group(1), m.group(2) or ""
+                # бэктик-фенс с ` в инфостроке не открывается (CommonMark)
+                if not (marker[0] == "`" and "`" in info):
+                    fence_char, fence_len = marker[0], len(marker)
+                    spans.append((offset, offset + len(line)))
+            else:
+                for cm in _INLINE_CODE_RE.finditer(line):
+                    spans.append((offset + cm.start(), offset + cm.end()))
+        previous_blank_or_start = blank
         offset += len(line)
     return spans
 
@@ -217,17 +230,19 @@ class SyncResult(dict):
         return self.get("status") in ("created", "updated", "skipped")
 
 
-def _raw_body_after_frontmatter(text):
-    """Тело файла после frontmatter-разделителя БЕЗ strip: python-frontmatter
+def _yaml_raw_body(text):
+    """Тело файла после YAML-разделителя `---` БЕЗ strip: python-frontmatter
     делает content.strip(), из-за чего отступ начала тела (например,
-    indented code block с ```) терялся и scanner не видел истинные отступы."""
+    indented code block с ```) терялся и scanner не видел истинные отступы.
+    Контракт raw-body fidelity — только YAML frontmatter (формат README);
+    JSON-frontmatter файлы продолжают использовать library-семантику."""
     lines = text.splitlines(keepends=True)
     if not lines or lines[0].rstrip("\r\n") != "---":
-        return text
+        return None
     for i in range(1, len(lines)):
         if lines[i].rstrip("\r\n") == "---":
             return "".join(lines[i + 1:])
-    return text
+    return None
 
 
 class Article:
@@ -237,8 +252,21 @@ class Article:
         self.path = os.path.abspath(path)
         self.base_dir = os.path.dirname(self.path)
         with open(self.path, encoding="utf-8") as fh:
-            self.raw_body = _raw_body_after_frontmatter(fh.read())
+            raw_text = fh.read()
         self.post = frontmatter.load(self.path)
+        # Единый source-of-truth тела (Issue #7): для YAML frontmatter —
+        # raw-тело без strip (сохраняет отступы, значимые для Markdown);
+        # для прочих форматов frontmatter — library-семантика post.content.
+        yaml_body = _yaml_raw_body(raw_text)
+        if yaml_body is not None:
+            # нормализация: ведущие пустые строки тела принадлежат разделителю
+            # "---\n\n" и восстанавливаются при записи (иначе тело пухнет на
+            # каждом сохранении и content_hash никогда не совпадает)
+            self.body = yaml_body.lstrip("\n")
+            self.yaml_frontmatter = True
+        else:
+            self.body = self.post.content
+            self.yaml_frontmatter = False
 
     @property
     def slug(self):
@@ -268,7 +296,7 @@ class Article:
 
         signature = {
             "title": title or "",
-            "content": self.post.content,
+            "content": self.body,
             "excerpt": excerpt or "",
             "metadata": {key: self.post.get(key) for key in metadata_keys},
             "local_images": local_images,
@@ -282,7 +310,16 @@ class Article:
         """Атомарная запись (M2): сериализация в память → temp-файл в том же
         каталоге → fsync → os.replace → fsync каталога. Сбой на любом шаге
         до подмены оставляет исходный файл байт-в-байт неизменным."""
-        data = frontmatter.dumps(self.post)
+        # Issue #7: файл = frontmatter-заголовок + raw-тело БЕЗ strip.
+        # Заголовок строится на Post с пустым содержимым (фиксированный
+        # разделитель "\n\n" ровно один раз) — тело не пересобирается и не
+        # пухнет; отступы/пустые строки тела сохраняются байт-в-байт.
+        header_post = frontmatter.Post("", handler=self.post.handler,
+                                       **self.post.metadata)
+        # dumps опускает разделитель "\n\n" при пустом содержимом —
+        # добавляем явно: файл = "---\nyaml\n---" + "\n\n" + тело
+        header = frontmatter.dumps(header_post).rstrip("\n")
+        data = header + "\n\n" + self.body
         directory = os.path.dirname(self.path) or "."
         try:
             original_mode = os.stat(self.path).st_mode & 0o777
@@ -321,7 +358,7 @@ class Article:
         внутри код-блоков и inline code игнорируются (M4)."""
         base = os.path.realpath(self.base_dir)
         found = []
-        for _fs, _fe, _is, _ie, rel, _mode, _alt in iter_image_destinations(self.raw_body):
+        for _fs, _fe, _is, _ie, rel, _mode, _alt in iter_image_destinations(self.body):
             if rel.lower().startswith(_LOCAL_SKIP):
                 continue
             candidate = os.path.realpath(os.path.join(self.base_dir, rel))
@@ -565,7 +602,7 @@ class SyncEngine:
             entry = new_map.get(dest)
             return entry["url"] if entry else None
 
-        payload_content = replace_image_destinations(article.post.content, url_for)
+        payload_content = replace_image_destinations(article.body, url_for)
         return payload_content, new_map, {"uploaded": uploaded, "reused": reused}
 
     # ---------- основная операция ----------
