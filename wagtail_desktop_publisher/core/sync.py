@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 
 import frontmatter
 import markdown as md_lib
@@ -21,8 +22,185 @@ import requests
 
 from .config import theme_for_host
 
-IMG_MD_RE = re.compile(r"!\[(.*?)\]\((.*?)\)")
 _LOCAL_SKIP = ("http://", "https://", "/media/", "/static/")
+
+# Markdown-изображения: обычная форма ![alt](dest), optional quoted title
+# ![alt](dest "title") и angle-bracket destination ![alt](<path with spaces>).
+# plain-destination не содержит пробелов — поэтому quoted title отделяется
+# однозначно (исправление M4: прежний regex захватывал title в путь).
+IMAGE_TOKEN_RE = re.compile(
+    r"!\[(?P<alt>[^\]]*)\]\(\s*"
+    r"(?:<(?P<angle>[^>]*)>|(?P<plain>[^)\s]+))"
+    r"(?:\s+\"(?P<title>[^\"]*)\")?\s*\)"
+)
+_FENCE_RE = re.compile(r"(`{3,}|~{3,})(.*)$")
+_INLINE_CODE_RE = re.compile(r"`+[^`]*`+")
+_REF_DEF_RE = re.compile(
+    r"^\s{0,3}\[(?P<label>[^\]]+)\]:\s*"
+    r"(?:<(?P<angle>[^>]*)>|(?P<plain>\S+))"
+    r'(?:\s+\"(?P<title>[^\"]*)\")?\s*$'
+)
+_REF_IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]]*)\]\[(?P<label>[^\]]*)\]")
+_SHORTCUT_IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]]+)\](?!\[)")
+
+
+def _excluded_code_spans(text):
+    """Диапазоны исходного текста, внутри которых image-токены игнорируются:
+    ограждённые код-блоки и inline code span'ы. Закрытие фенса — по
+    CommonMark: тот же символ, длина не меньше открывающей, после маркера
+    только пробелы/табуляция; строка с текстом после маркера фенс НЕ
+    закрывает (остаётся содержимым код-блока)."""
+    spans = []
+    offset = 0
+    fence_char = None
+    fence_len = 0
+    # CommonMark: indented code block не может прерывать абзац — он
+    # открывается только после пустой строки (или в начале документа) и
+    # продолжается последующими indented/пустыми строками. Четырёхпробельная
+    # строка внутри абзаца — его продолжение, renderer обрабатывает image
+    # как inline: такие строки НЕ исключаются (Issue #7, п.2).
+    previous_blank_or_start = True
+    previous_was_indented_code = False
+    for line in text.splitlines(keepends=True):
+        indent = len(line) - len(line.lstrip(" "))
+        stripped = line.lstrip(" ")
+        blank = stripped.strip() == ""
+        if fence_char is not None:
+            spans.append((offset, offset + len(line)))
+            if indent <= 3:
+                m = re.match(r"(`{3,}|~{3,})[ \t]*$", stripped)
+                if m and m.group(1)[0] == fence_char and len(m.group(1)) >= fence_len:
+                    fence_char = None
+        elif indent >= 4:
+            if blank:
+                pass  # пустая строка не содержит токенов
+            elif previous_blank_or_start or previous_was_indented_code:
+                # indented code block (открытие или продолжение)
+                spans.append((offset, offset + len(line)))
+                previous_was_indented_code = True
+            else:
+                # продолжение абзаца: image-токены строки НЕ исключаются
+                for cm in _INLINE_CODE_RE.finditer(line):
+                    spans.append((offset + cm.start(), offset + cm.end()))
+        else:
+            previous_was_indented_code = False
+            m = _FENCE_RE.match(stripped)
+            if m:
+                marker, info = m.group(1), m.group(2) or ""
+                # бэктик-фенс с ` в инфостроке не открывается (CommonMark)
+                if not (marker[0] == "`" and "`" in info):
+                    fence_char, fence_len = marker[0], len(marker)
+                    spans.append((offset, offset + len(line)))
+            else:
+                for cm in _INLINE_CODE_RE.finditer(line):
+                    spans.append((offset + cm.start(), offset + cm.end()))
+        previous_blank_or_start = blank
+        offset += len(line)
+    return spans
+
+
+def _parse_definitions(text, excluded):
+    """Словарь reference-определений `[label]: destination` (вне кода);
+    ключ — label в нижнем регистре, значение — destination."""
+    defs = {}
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        m = _REF_DEF_RE.match(line)
+        if m:
+            start, end = offset, offset + len(line)
+            if not any(s <= start and end <= e for s, e in excluded):
+                dest = m.group("angle") if m.group("angle") is not None else m.group("plain")
+                defs[m.group("label").strip().lower()] = dest.strip()
+        offset += len(line)
+    return defs
+
+
+def iter_image_destinations(text):
+    """Yield (full_start, full_end, inner_start, inner_end, dest, mode, alt)
+    для реальных image-ссылок вне кода. mode: "inline" — inner_* выделяет
+    destination внутри скобок (замена по нему сохраняет alt/title);
+    "ref" — reference-style image (full/collapsed/shortcut), разрешённая
+    по определениям `[label]: dest`; заменяется весь токен на
+    ![alt](server_url). Ссылка с неизвестным label пропускается
+    (CommonMark рендерит её как текст)."""
+    excluded = _excluded_code_spans(text)
+    defs = _parse_definitions(text, excluded)
+
+    def excluded_at(start, end):
+        return any(s <= start and end <= e for s, e in excluded)
+
+    # Единый набор токенов (Issue #6): inline, full/collapsed и shortcut
+    # собираются вместе и сортируются по исходной позиции — потребитель
+    # replace_image_destinations() предполагает монотонно возрастающие span'ы.
+    tokens = []
+    for m in IMAGE_TOKEN_RE.finditer(text):
+        if excluded_at(*m.span()):
+            continue
+        if m.group("angle") is not None:
+            inner_start, inner_end = m.span("angle")
+            dest = m.group("angle")
+        else:
+            inner_start, inner_end = m.span("plain")
+            dest = m.group("plain")
+        tokens.append((m.start(), m.end(), inner_start, inner_end, dest,
+                       "inline", m.group("alt")))
+
+    for m in _REF_IMAGE_RE.finditer(text):
+        if excluded_at(*m.span()):
+            continue
+        label = (m.group("label") or m.group("alt") or "").strip().lower()
+        dest = defs.get(label)
+        if not dest:
+            continue
+        dest = dest[1:-1] if dest.startswith("<") and dest.endswith(">") else dest
+        tokens.append((m.start(), m.end(), m.start(), m.end(), dest,
+                       "ref", m.group("alt")))
+
+    for m in _SHORTCUT_IMAGE_RE.finditer(text):
+        if excluded_at(*m.span()):
+            continue
+        label = m.group("alt").strip().lower()
+        dest = defs.get(label)
+        if not dest:
+            continue
+        dest = dest[1:-1] if dest.startswith("<") and dest.endswith(">") else dest
+        tokens.append((m.start(), m.end(), m.start(), m.end(), dest,
+                       "ref", m.group("alt")))
+
+    # строгий порядок по позиции; пересекающиеся/дублирующие матчи
+    # отбрасываются (токен с более ранним началом имеет приоритет)
+    tokens.sort(key=lambda tk: (tk[0], tk[1]))
+    accepted = []
+    last_end = -1
+    for tk in tokens:
+        if tk[0] < last_end:
+            continue
+        accepted.append(tk)
+        last_end = tk[1]
+    yield from accepted
+
+
+def replace_image_destinations(text, url_for):
+    """Возвращает текст с подставленными server-URL: inline — замена по
+    inner-span (alt/title сохраняются); reference-style — весь токен
+    превращается в ![alt](server_url). Позиционная замена: одинаковые
+    basename в разных каталогах не пересекаются, код-блоки не затрагиваются."""
+    out = []
+    last = 0
+    for full_start, full_end, inner_start, inner_end, dest, mode, alt in iter_image_destinations(text):
+        url = url_for(dest)
+        if not url:
+            continue
+        if mode == "inline":
+            out.append(text[last:inner_start])
+            out.append(url)
+            last = inner_end
+        else:
+            out.append(text[last:full_start])
+            out.append(f"![{alt}]({url})")
+            last = full_end
+    out.append(text[last:])
+    return "".join(out)
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -52,13 +230,43 @@ class SyncResult(dict):
         return self.get("status") in ("created", "updated", "skipped")
 
 
+def _yaml_raw_body(text):
+    """Тело файла после YAML-разделителя `---` БЕЗ strip: python-frontmatter
+    делает content.strip(), из-за чего отступ начала тела (например,
+    indented code block с ```) терялся и scanner не видел истинные отступы.
+    Контракт raw-body fidelity — только YAML frontmatter (формат README);
+    JSON-frontmatter файлы продолжают использовать library-семантику."""
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
+        return None
+    for i in range(1, len(lines)):
+        if lines[i].rstrip("\r\n") == "---":
+            return "".join(lines[i + 1:])
+    return None
+
+
 class Article:
     """Обёртка над .md файлом: frontmatter + путь."""
 
     def __init__(self, path):
         self.path = os.path.abspath(path)
         self.base_dir = os.path.dirname(self.path)
+        with open(self.path, encoding="utf-8") as fh:
+            raw_text = fh.read()
         self.post = frontmatter.load(self.path)
+        # Единый source-of-truth тела (Issue #7): для YAML frontmatter —
+        # raw-тело без strip (сохраняет отступы, значимые для Markdown);
+        # для прочих форматов frontmatter — library-семантика post.content.
+        yaml_body = _yaml_raw_body(raw_text)
+        if yaml_body is not None:
+            # нормализация: ведущие пустые строки тела принадлежат разделителю
+            # "---\n\n" и восстанавливаются при записи (иначе тело пухнет на
+            # каждом сохранении и content_hash никогда не совпадает)
+            self.body = yaml_body.lstrip("\n")
+            self.yaml_frontmatter = True
+        else:
+            self.body = self.post.content
+            self.yaml_frontmatter = False
 
     @property
     def slug(self):
@@ -88,7 +296,7 @@ class Article:
 
         signature = {
             "title": title or "",
-            "content": self.post.content,
+            "content": self.body,
             "excerpt": excerpt or "",
             "metadata": {key: self.post.get(key) for key in metadata_keys},
             "local_images": local_images,
@@ -99,16 +307,58 @@ class Article:
         return _sha256_text(encoded)
 
     def save(self):
-        with open(self.path, "w", encoding="utf-8") as fh:
-            frontmatter.dump(self.post, fh)
+        """Атомарная запись (M2): сериализация в память → temp-файл в том же
+        каталоге → fsync → os.replace → fsync каталога. Сбой на любом шаге
+        до подмены оставляет исходный файл байт-в-байт неизменным."""
+        # Issue #7: файл = frontmatter-заголовок + raw-тело БЕЗ strip.
+        # Заголовок строится на Post с пустым содержимым (фиксированный
+        # разделитель "\n\n" ровно один раз) — тело не пересобирается и не
+        # пухнет; отступы/пустые строки тела сохраняются байт-в-байт.
+        header_post = frontmatter.Post("", handler=self.post.handler,
+                                       **self.post.metadata)
+        # dumps опускает разделитель "\n\n" при пустом содержимом —
+        # добавляем явно: файл = "---\nyaml\n---" + "\n\n" + тело
+        header = frontmatter.dumps(header_post).rstrip("\n")
+        data = header + "\n\n" + self.body
+        directory = os.path.dirname(self.path) or "."
+        try:
+            original_mode = os.stat(self.path).st_mode & 0o777
+        except OSError:
+            original_mode = None
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=".wdp-save-", suffix=".md", dir=directory
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+            if original_mode is not None:
+                os.chmod(tmp_path, original_mode)
+            os.replace(tmp_path, self.path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        try:  # fsync каталога — best effort (не все платформы поддерживают)
+            dir_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
 
     def local_images(self):
         """Локальные картинки в тексте: [(md_path, abs_path|None)].
         Путь внутри директории статьи; ../ и абсолютные за её пределами
-        отбрасываются (защита от выноса произвольных файлов)."""
+        отбрасываются (защита от выноса произвольных файлов). Image-ссылки
+        внутри код-блоков и inline code игнорируются (M4)."""
         base = os.path.realpath(self.base_dir)
         found = []
-        for _alt, rel in IMG_MD_RE.findall(self.post.content):
+        for _fs, _fe, _is, _ie, rel, _mode, _alt in iter_image_destinations(self.body):
             if rel.lower().startswith(_LOCAL_SKIP):
                 continue
             candidate = os.path.realpath(os.path.join(self.base_dir, rel))
@@ -124,58 +374,104 @@ class Article:
 
 
 class WagtailAPI:
-    """Тонкий клиент v3 API. Все вызовы синхронные."""
+    """Тонкий клиент v3 API. Все вызовы синхронные.
+
+    M6: ответы нормализуются — не-JSON/пустые тела и сетевые сбои
+    превращаются в SyncError с операцией и HTTP-статусом; в текст ошибки
+    никогда не попадают Authorization/token/query-секреты.
+    """
 
     def __init__(self, api_url, token, timeout=120):
         self.api_url = api_url.rstrip("/")
+        self._token = token
         self.session = requests.Session()
         self.session.headers["Authorization"] = f"Bearer {token}"
         self.timeout = timeout
 
+    def _redact(self, text):
+        """Убирает configured Bearer token и authorization-like значения из
+        диагностических фрагментов (сервер/WAF может отражать заголовки)."""
+        if not text:
+            return ""
+        text = str(text)
+        if self._token:
+            text = text.replace(self._token, "[REDACTED_TOKEN]")
+        text = re.sub(
+            r"(?i)(authorization\s*[:=]\s*)\S+",
+            r"\1[REDACTED]",
+            text,
+        )
+        text = re.sub(
+            r"(?i)(bearer\s+)[A-Za-z0-9._\-]+",
+            r"\1[REDACTED]",
+            text,
+        )
+        return text
+
     def _url(self, path):
         return f"{self.api_url}/{path.lstrip('/')}"
 
+    def _request(self, method, url, operation, **kwargs):
+        """Сетевой вызов с нормализацией timeout/connection ошибок в
+        SyncError (с сохранением exception chaining)."""
+        try:
+            return self.session.request(method, url, timeout=self.timeout, **kwargs)
+        except requests.RequestException as exc:
+            raise SyncError(
+                f"{operation} → сетевая ошибка: {exc.__class__.__name__}"
+            ) from exc
+
+    def _json(self, resp, operation, ok=(200,)):
+        """JSON-тело успешного ответа; иначе SyncError. Не-JSON тело
+        (заглушки прокси/WAF) → SyncError с content-type и фрагментом
+        ≤200 символов. Секреты в текст ошибки не включаются."""
+        if resp.status_code not in ok:
+            # Diagnostic excerpt: redacted + capped; строка не содержит
+            # Authorization/token/query-секретов.
+            excerpt = self._redact((resp.text or ""))[:200]
+            raise SyncError(
+                f"{operation} → HTTP {resp.status_code}: {excerpt!r}"
+            )
+        try:
+            return resp.json()
+        except ValueError as exc:
+            content_type = resp.headers.get("Content-Type", "unspecified")
+            excerpt = self._redact((resp.text or ""))[:200]
+            raise SyncError(
+                f"{operation} → HTTP {resp.status_code}: тело не является JSON "
+                f"(content-type: {content_type}), фрагмент: {excerpt!r}"
+            ) from exc
+
     def sites(self):
-        resp = self.session.get(self._url("sites/"), timeout=self.timeout)
-        if resp.status_code != 200:
-            raise SyncError(f"sites/ → HTTP {resp.status_code}: {resp.text[:200]}")
-        return resp.json().get("items", [])
+        resp = self._request("GET", self._url("sites/"), "sites/")
+        return self._json(resp, "sites/").get("items", [])
 
     def pages(self, **params):
-        resp = self.session.get(self._url("pages/"), params=params, timeout=self.timeout)
-        if resp.status_code != 200:
-            raise SyncError(f"pages/ → HTTP {resp.status_code}")
-        return resp.json()
+        resp = self._request("GET", self._url("pages/"), "pages/", params=params)
+        return self._json(resp, "pages/")
 
     def categories(self):
         """Рубрики сайта (id, name, parent_id, level). Пусто, если у сайта их нет."""
-        resp = self.session.get(self._url("publisher-meta/categories/"), timeout=self.timeout)
-        if resp.status_code != 200:
-            raise SyncError(f"categories/ → HTTP {resp.status_code}")
-        return resp.json().get("items", [])
+        resp = self._request("GET", self._url("publisher-meta/categories/"), "categories/")
+        return self._json(resp, "categories/").get("items", [])
 
     def tags(self, search=None, limit=200):
         """Теги сайта (id, name), опционально с поиском по подстроке."""
-        resp = self.session.get(
-            self._url("publisher-meta/tags/"),
+        resp = self._request(
+            "GET", self._url("publisher-meta/tags/"), "tags/",
             params={"search": search, "limit": limit},
-            timeout=self.timeout,
         )
-        if resp.status_code != 200:
-            raise SyncError(f"tags/ → HTTP {resp.status_code}")
-        return resp.json().get("items", [])
+        return self._json(resp, "tags/").get("items", [])
 
     def upload_image(self, path, year, slug, title):
+        operation = f"upload {os.path.basename(path)}"
         with open(path, "rb") as fh:
-            resp = self.session.post(
-                self._url("publisher-images/"),
+            resp = self._request(
+                "POST", self._url("publisher-images/"), operation,
                 data={"title": title, "year": str(year), "slug": str(slug or "")},
                 files={"file": (os.path.basename(path), fh)},
-                timeout=self.timeout,
             )
-        if resp.status_code not in (200, 201):
-            raise SyncError(f"upload {os.path.basename(path)} → HTTP {resp.status_code}: {resp.text[:300]}")
-        return resp.json()
+        return self._json(resp, operation, ok=(200, 201))
 
     def create_page(self, payload, page_type, parent_id, publish):
         payload = dict(payload)
@@ -184,8 +480,8 @@ class WagtailAPI:
         if publish:
             meta["action"] = "publish"
         payload["meta"] = meta
-        resp = self.session.post(self._url("pages/"), json=payload, timeout=self.timeout)
-        return self._page_response(resp, "создана")
+        resp = self._request("POST", self._url("pages/"), "create page", json=payload)
+        return self._page_response(resp, "создана", operation="create page")
 
     def update_page(self, page_id, payload, publish, page_type):
         payload = dict(payload)
@@ -195,30 +491,32 @@ class WagtailAPI:
         if publish:
             meta["action"] = "publish"
         payload["meta"] = meta
-        resp = self.session.patch(self._url(f"pages/{page_id}/"), json=payload, timeout=self.timeout)
-        return self._page_response(resp, "обновлена")
+        resp = self._request(
+            "PATCH", self._url(f"pages/{page_id}/"), f"update page {page_id}",
+            json=payload,
+        )
+        return self._page_response(resp, "обновлена", operation=f"update page {page_id}")
 
     def unpublish_page(self, page_id):
-        resp = self.session.post(
-            self._url(f"pages/{page_id}/actions/unpublish/"), timeout=self.timeout
+        operation = f"unpublish {page_id}"
+        resp = self._request(
+            "POST", self._url(f"pages/{page_id}/actions/unpublish/"), operation
         )
-        if resp.status_code not in (200, 201):
-            raise SyncError(f"unpublish → HTTP {resp.status_code}: {resp.text[:300]}")
+        self._json(resp, operation, ok=(200, 201))
         return True
 
-    def get_page(self, page_id):
-        resp = self.session.get(
-            self._url(f"pages/{page_id}/"), params={"type": "blog.BlogPage"}, timeout=self.timeout
+    def get_page(self, page_id, page_type="blog.BlogPage"):
+        # page_type параметризован (Д66): чужой проект публикует в свой тип
+        operation = f"get page {page_id}"
+        resp = self._request(
+            "GET", self._url(f"pages/{page_id}/"), operation,
+            params={"type": page_type},
         )
-        if resp.status_code != 200:
-            raise SyncError(f"pages/{page_id} → HTTP {resp.status_code}")
-        return resp.json()
+        return self._json(resp, operation)
 
-    @staticmethod
-    def _page_response(resp, mode):
-        if resp.status_code not in (200, 201):
-            raise SyncError(f"HTTP {resp.status_code}: {resp.text[:400]}")
-        data = resp.json()
+    def _page_response(self, resp, mode, operation):
+        op_label = f"{operation} ({mode})"
+        data = self._json(resp, op_label, ok=(200, 201))
         return {"id": data.get("id"), "mode": mode, "data": data}
 
 
@@ -231,30 +529,62 @@ class SyncEngine:
 
     # ---------- картинки ----------
 
+    def _preflight_local_images(self, article: Article):
+        """M5, fail closed ДО любых API writes: каждая реальная локальная
+        image-ссылка должна указывать на существующий файл внутри каталога
+        статьи. Remote HTTP(S)/media/static ссылки не проверяются — они
+        намеренно не управляются publisher'ом. Нарушение → SyncError с
+        путём и причиной; ни одна картинка не загружается, страница не
+        создаётся и не обновляется."""
+        base = os.path.realpath(article.base_dir)
+        for rel, abs_path in article.local_images():
+            if abs_path is not None:
+                continue
+            candidate = os.path.realpath(os.path.join(article.base_dir, rel))
+            try:
+                inside = os.path.commonpath((base, candidate)) == base
+            except ValueError:
+                inside = False
+            if not inside:
+                raise SyncError(
+                    f"путь изображения вне каталога статьи — синхронизация "
+                    f"прервана (fail closed): {rel} → {candidate}"
+                )
+            if not os.path.exists(candidate):
+                raise SyncError(
+                    f"локальный файл изображения отсутствует — синхронизация "
+                    f"прервана (fail closed): {rel}"
+                )
+            raise SyncError(
+                f"локальная ссылка не является регулярным файлом — "
+                f"синхронизация прервана: {rel}"
+            )
+
     def _resolve_images(self, article: Article, year, slug, log):
         """Загружает/переиспользует картинки, возвращает:
-        content с серверными URL (только для payload) и карту изображений."""
+        content с серверными URL (только для payload) и карту изображений.
+        Замена позиционная (по токенам): одинаковые базовые имена в разных
+        каталогах не пересекаются, код-блоки не затрагиваются (M4/L7)."""
         images_map = article.post.get("images") or {}
         new_map = {}
-        payload_content = article.post.content
-        uploaded = reused = missing = 0
+        uploaded = reused = 0
 
+        seen_rels = set()
         for rel, abs_path in article.local_images():
+            if rel in seen_rels:
+                # повторная ссылка на тот же путь: запись уже посчитана/будет
+                # получена в этой попытке — повторная загрузка недопустима
+                reused += 1
+                continue
+            seen_rels.add(rel)
+
             entry = images_map.get(rel)
             file_hash = _file_sha256(abs_path) if abs_path else None
 
             if entry and entry.get("file_hash") == file_hash and entry.get("url"):
                 # картинка не менялась — переиспользуем
                 new_map[rel] = entry
-                payload_content = payload_content.replace(f"]({rel})", f"]({entry['url']})")
                 reused += 1
-                continue
-
-            if not abs_path:
-                missing += 1
-                log(f"  ⚠️ файл не найден, оставлен как есть: {rel}")
-                if entry:
-                    new_map[rel] = entry
                 continue
 
             title = os.path.splitext(os.path.basename(abs_path))[0]
@@ -265,11 +595,15 @@ class SyncEngine:
                 "file_hash": file_hash,
             }
             new_map[rel] = entry
-            payload_content = payload_content.replace(f"]({rel})", f"]({data['download_url']})")
             uploaded += 1
             log(f"  ⬆️ загружено: {rel} → id {data['id']} ({year}/{slug or 'misc'})")
 
-        return payload_content, new_map, {"uploaded": uploaded, "reused": reused, "missing": missing}
+        def url_for(dest):
+            entry = new_map.get(dest)
+            return entry["url"] if entry else None
+
+        payload_content = replace_image_destinations(article.body, url_for)
+        return payload_content, new_map, {"uploaded": uploaded, "reused": reused}
 
     # ---------- основная операция ----------
 
@@ -293,6 +627,11 @@ class SyncEngine:
             publish = bool(article.post.get("published", False))
 
         excerpt = article.post.get("excerpt") or ""
+
+        # M5 (follow-up): префлайт ДО fast-path по content_hash — иначе статья,
+        # синхронизированная прежней версией с content_hash при отсутствующем
+        # файле, навсегда получала бы skipped без проверки (обход fail-closed).
+        self._preflight_local_images(article)
 
         # Store the effective metadata in frontmatter too. Otherwise GUI-selected
         # tags/categories/main image can be sent once and then disappear from the
@@ -423,7 +762,7 @@ class SyncEngine:
         wagtail_id = article.post.get("wagtail_id")
         if not wagtail_id:
             raise SyncError("Статья не привязана к Wagtail (нет wagtail_id)")
-        page = self.api.get_page(int(wagtail_id))
+        page = self.api.get_page(int(wagtail_id), page_type=self.page_type)
         meta = page.get("meta", {}) or {}
         article.post["title"] = page.get("title", article.title)
         article.post["slug"] = page.get("slug", article.slug)

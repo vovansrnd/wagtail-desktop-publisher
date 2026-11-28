@@ -19,9 +19,6 @@ The local Markdown document remains editable: relative image paths are preserved
 - GUI with OS dark/light appearance, site/parent selection from the API, scan-and-sync flow, background network operations, logs, and 13 UI locales.
 - Configuration stored in `~/.wagtail_publisher.json` with owner-only file permissions and atomic replacement.
 
-## Audit/release status
-
-
 ## Requirements
 
 The package depends on `requests`, `python-frontmatter`, `markdown`, and `customtkinter`. It targets Wagtail's v3 API with write support. The original package documentation states Wagtail 7.0+ and reports verification against Wagtail 8.0; do not treat that as a guarantee for every later version. Verify the API endpoints and writable fields on your site before production use.
@@ -124,7 +121,7 @@ Do not expose a write-capable token in scripts committed to Git or share it in l
 
 The API URL, token, site, and optional default parent are stored in `~/.wagtail_publisher.json`. The file is written with mode `0600` where supported. Treat it as a secret because it contains a bearer token. The publisher also maintains a separate site metadata cache in the user's home directory; it contains category/tag lookup data, not a replacement for the authoritative site database.
 
-The publisher resolves local image paths relative to the article directory and rejects paths that escape that directory. Missing image files are reported rather than silently converted to arbitrary local filesystem paths.
+The publisher resolves local image paths relative to the article directory and rejects paths that escape that directory. Synchronization is fail closed: if a referenced local image file is missing, escapes the article directory, or is not a regular file, the sync stops with an error before any page create/update or image upload — nothing is published with broken image links. Reference-style Markdown images (`![alt][label]` with a `[label]: destination` definition) are checked the same way; duplicate references to the same file are uploaded once. Remote `http(s)`, `/media/` and `/static/` references are not managed by the publisher and are passed through untouched.
 
 ## Storage and revisions
 
@@ -153,4 +150,4 @@ pip install -e .
 python scripts/build_locales.py
 ```
 
-Run the CLI against a staging site before release. The source bundle does not include an automated test suite, so GUI behavior, API write operations, error handling, and cross-version compatibility need explicit verification. MIT.
+Run the CLI against a staging site before release. The source bundle includes a functional regression test suite (`tests/runtests.py`; verified on the target stack: Python 3.14.4, Django 6.0.9, Wagtail 8.1 — this does not mean every `wagtail>=6.0` combination is tested), so GUI behavior, cross-version compatibility and your storage configuration still need explicit verification. MIT.

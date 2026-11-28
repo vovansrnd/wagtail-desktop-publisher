@@ -57,6 +57,7 @@ Le site cible doit exposer l’API v3 et `/api/v3/publisher-images/` ; cet endpo
 
 ## Sécurité et exploitation
 
+- Un fichier image local manquant ou inaccessible interrompt la synchronisation avant tout appel API (fail closed) : les liens d’image cassés ne sont pas publiés. Le paquet source inclut la suite de tests de régression (`tests/runtests.py` ; vérifié sur Python 3.14.4 / Django 6.0.9 / Wagtail 8.1 — pas toutes les combinaisons `wagtail>=6.0`).
 - Maintenez les dépendances à jour. Pour le HTML utilisateur, utilisez le chemin prévu de nettoyage et de rendu ; n’affichez pas les commentaires ou messages stockés avec un `|safe` inconditionnel.
 - Vérifiez migrations et autorisations avec des utilisateurs normaux, restreints, modérateurs et administrateurs.
 - En environnement multisite, testez chaque domaine configuré ainsi qu’un hôte inconnu. Si aucun Site n’est trouvé, une requête ne doit jamais s’élargir à tous les sites.
@@ -83,5 +84,5 @@ Si le flux ne fonctionne pas, vérifiez la configuration de l’application, les
 
 ## Licence et assistance
 
-MIT. L’adresse publique du dépôt n’a pas pu être confirmée lors de cet audit. N’inventez pas d’URL GitHub ; vérifiez les liens du projet sur PyPI.
+MIT. Consultez les liens du projet sur PyPI pour l’adresse officielle du dépôt.
 

@@ -18,6 +18,7 @@ from markdownify import markdownify as html_to_md
 from wagtail_desktop_publisher.core.config import (
     load_config, load_site_cache, save_config, save_site_cache,
 )
+from wagtail_desktop_publisher.core.paths import resolve_export_path
 from wagtail_desktop_publisher.core.sync import Article, SyncEngine, SyncError, WagtailAPI
 from wagtail_desktop_publisher.i18n import SUPPORTED_LANGUAGES, get_translation
 
@@ -185,12 +186,21 @@ class PublisherApp(ctk.CTk):
             page = self._found_pages[idx] if idx < len(self._found_pages) else None
             if not page:
                 return
-            detail = self.api.get_page(page["id"])
+            detail = self.api.get_page(
+                page["id"], page_type=self.cfg.get("page_type", PAGE_TYPE))
             slug = detail.get("slug", f"page-{page['id']}")
             body = detail.get("body")
             html = body.get("content") if isinstance(body, dict) else str(body or "")
             md = html_to_md(html)
-            d = os.path.join(os.path.expanduser("~/articles"), slug)
+            # M3: slug контролируется сервером — путь строится через
+            # безопасное разрешение; отказ = ничего не записано
+            try:
+                d = resolve_export_path(
+                    slug, os.path.join(os.path.expanduser("~"), "articles")
+                )
+            except ValueError as e:
+                self._log(f"❌ экспорт отменён: {e}")
+                return
             os.makedirs(d, exist_ok=True)
             post = frontmatter.Post(md, **{
                 "title": detail.get("title", ""), "slug": slug,
@@ -228,6 +238,10 @@ class PublisherApp(ctk.CTk):
         self.cat_filter.bind("KeyRelease", lambda _e: self._render_categories())
         self.cat_frame = ctk.CTkScrollableFrame(meta_tab, height=160)
         self.cat_frame.pack(fill="both", expand=True, padx=8)
+        # Д66: статус-лейбл вместо CTkScrollableFrame.configure(label=...) —
+        # customtkinter 6.0 не поддерживает label в configure (ValueError)
+        self.cat_status = ctk.CTkLabel(meta_tab, text="")
+        self.cat_status.pack(anchor="w", padx=8)
         ctk.CTkLabel(meta_tab, text=_("Tags")).pack(anchor="w", padx=8, pady=(8, 2))
         self.tags_box = ctk.CTkComboBox(meta_tab, values=[], width=430)
         self.tags_box.set("")
@@ -315,7 +329,9 @@ class PublisherApp(ctk.CTk):
         self._tag_names = [t["name"] for t in tags]
         self.tags_box.configure(values=self._tag_names)
         if not categories:
-            self.cat_frame.configure(label="—")
+            self.cat_status.configure(text="—")
+        else:
+            self.cat_status.configure(text="")
 
     def _load_meta(self, force):
         site = self.cfg.get("site", "")

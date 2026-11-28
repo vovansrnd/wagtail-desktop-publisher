@@ -57,6 +57,7 @@ Hedef site API v3 ve `/api/v3/publisher-images/` yolunu sunmalıdır; bu yüklem
 
 ## Güvenlik ve işletim
 
+- Eksik veya erişilemez yerel görsel dosyası, herhangi bir API çağrısından önce senkronizasyonu durdurur (fail closed) — bozuk görsel bağlantıları yayınlanmaz. Kaynak paket, işlevsel regresyon test paketini içerir (`tests/runtests.py`; Python 3.14.4 / Django 6.0.9 / Wagtail 8.1 üzerinde doğrulanmıştır — tüm `wagtail>=6.0` kombinasyonları değil).
 - Bağımlılıkları güncel tutun. Kullanıcı HTML’si için belirlenen temizleme/görüntüleme yolunu kullanın; kaydedilmiş yorumları veya forum gönderilerini koşulsuz `|safe` ile göstermeyin.
 - Geçişleri ve izinleri normal, kısıtlı, moderatör ve yönetici hesaplarıyla kontrol edin.
 - Çoklu site kurulumlarında yapılandırılmış her alan adını ve bilinmeyen bir hostu sınayın. Site bulunamazsa sorgu tüm sitelerdeki kayıtları kapsayacak şekilde genişlememelidir.

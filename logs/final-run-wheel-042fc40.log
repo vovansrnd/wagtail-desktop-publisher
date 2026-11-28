@@ -1,0 +1,19 @@
+### Пометка агента — команды (не часть stdout):
+### Сборка: python -m build --outdir /tmp/wdp_build2 . (HEAD 042fc40e2e66ec15e7623923d9be59534ce831de)
+### Установка: pip install --no-cache-dir --force-reinstall --no-deps <wheel 0.3.4 hardening>
+### Запуск: PYTHONUNBUFFERED=1 <clean-wdp-venv>/bin/python tests/runtests.py (sqlite :memory:, tmp MEDIA_ROOT)
+=== FINAL WHEEL SUITE (hardening rev2): HEAD 042fc40e2e66ec15e7623923d9be59534ce831de / wheel SHA256 3d740a670db4ce695883fed82f8222cf5c0250d18d61e6146137a8621e84310f / sdist SHA256 f24e0092578b5c564b6359795127833acd435e97f2702ddbbd7eb4cc0fefe18f / Python Python 3.14.4 / Django 6.0.9 / Wagtail (8, 1, 0, 'final', 1) / SQLite (:memory:, tmp MEDIA_ROOT) ===
+=== Партия hardening: M2 атомарное save, M3 экспорт-путь, M4 title-парсер + позиционная замена, M5 fail-closed префлайт, M6 нормализация ответов; 4 коммита 0.3.4 сохранены ===
+проверяемый пакет (wheel): /opt/MyApps/wagtail/d67-release-audit/clean-wdp-venv/lib/python3.14/site-packages/wagtail_desktop_publisher/__init__.py
+Found 45 test(s).
+Creating test database for alias 'default'...
+System check identified no issues (0 silenced).
+............................................  ⬆️ загружено: one/img.png → id 101 (2026/t)
+  ⬆️ загружено: two/img.png → id 102 (2026/t)
+.
+----------------------------------------------------------------------
+Ran 45 tests in 3.012s
+
+OK
+Destroying test database for alias 'default'...
+=== EXIT=0 ===

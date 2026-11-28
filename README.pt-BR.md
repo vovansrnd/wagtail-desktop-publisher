@@ -57,6 +57,7 @@ O site de destino precisa expor a API v3 e `/api/v3/publisher-images/`; esse end
 
 ## Segurança e operação
 
+- Um arquivo de imagem local ausente ou inacessível interrompe a sincronização antes de qualquer chamada de API (fail closed): links de imagem quebrados não são publicados. O pacote fonte inclui a suíte de testes de regressão (`tests/runtests.py`; verificado em Python 3.14.4 / Django 6.0.9 / Wagtail 8.1 — nem todas as combinações de `wagtail>=6.0`).
 - Mantenha as dependências atualizadas. Para HTML escrito por usuários, use o fluxo previsto de sanitização e renderização; não exiba comentários ou posts armazenados com `|safe` incondicional.
 - Verifique migrações e permissões com usuários comuns, restritos, moderadores e administradores.
 - Em instalações multissite, teste cada domínio configurado e um host desconhecido. Se nenhum Site for encontrado, a consulta não deve abranger registros de todos os sites.
@@ -83,5 +84,5 @@ Se o fluxo não funcionar, confira a configuração do app, migrações, ordem d
 
 ## Licença e suporte
 
-MIT. Não foi possível confirmar o endereço público do repositório nesta auditoria. Não invente uma URL do GitHub; confira os links no PyPI.
+MIT. Confira os links do PyPI para o endereço oficial do repositório.
 

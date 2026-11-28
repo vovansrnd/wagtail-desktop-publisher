@@ -6,9 +6,11 @@
 import gettext
 import os
 
-LOCALE_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "locale")
-)
+# Д66: локали лежат ВНУТРИ пакета (wagtail_desktop_publisher/locale/).
+# Прежний путь "../locale" работал только в editable-исходниках; в
+# wheel-установке указывал на site-packages/locale — GUI всегда падал
+# на английский fallback.
+LOCALE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "locale"))
 
 SUPPORTED_LANGUAGES = [
     ("en", "English"),

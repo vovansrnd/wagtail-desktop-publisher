@@ -57,6 +57,7 @@ Witryna docelowa musi udostępniać API v3 i `/api/v3/publisher-images/`; ten en
 
 ## Bezpieczeństwo i eksploatacja
 
+- Brakujący lub niedostępny lokalny plik obrazu przerywa synchronizację przed jakimikolwiek wywołaniami API (fail closed) — uszkodzone linki obrazów nie są publikowane. Pakiet źródłowy zawiera funkcjonalną suitę testów regresyjnych (`tests/runtests.py`; zweryfikowana na Python 3.14.4 / Django 6.0.9 / Wagtail 8.1 — nie wszystkie kombinacje `wagtail>=6.0`).
 - Aktualizuj zależności. Dla HTML użytkowników stosuj przewidziany mechanizm oczyszczania i renderowania; nie wyświetlaj zapisanych komentarzy ani postów bezwarunkowo przez `|safe`.
 - Sprawdź migracje i uprawnienia jako zwykły, ograniczony użytkownik, moderator i administrator.
 - W instalacji wieloserwisowej przetestuj każdą skonfigurowaną domenę i nieznany host. Brak Site nie może rozszerzać zapytania na rekordy wszystkich witryn.

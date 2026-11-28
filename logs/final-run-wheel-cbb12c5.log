@@ -1,0 +1,25 @@
+### Пометка агента — команды (не часть stdout):
+### Сборка: python -m build --outdir /tmp/wdp_build4 . (HEAD cbb12c5ea68c2f2d0fa9adcd800264256a2dc061)
+### Установка: pip install --no-cache-dir --force-reinstall --no-deps <wheel> (+ пины Django==6.0.9 Wagtail==8.1.0)
+### Запуск: PYTHONUNBUFFERED=1 <clean-wdp-venv>/bin/python tests/runtests.py (sqlite :memory:, tmp MEDIA_ROOT)
+### Инвентарь wheel: 0 pycache/pyc; wagtail_api.py присутствует; 24 locale-файла (12 языков × po+mo)
+=== FINAL WHEEL SUITE (Issue #6): HEAD cbb12c5ea68c2f2d0fa9adcd800264256a2dc061 / wheel SHA256 1f794a1f64d7ce956f6c1060385711253682f81e196716ebfe9b463d9425b01a / sdist SHA256 a190eaf4ed2ec4e2c463eeab7d79d4481cc2596101dd0aba704ab80752523fda / Python Python 3.14.4 / Django 6.0.9 / Wagtail (8, 1, 0, 'final', 1) / SQLite (:memory:, tmp MEDIA_ROOT) ===
+=== Issue #6: упорядоченный поток токенов (reference/inline/shortcut смешения), фенс-отступ ≤3 пробелов, raw-сканер; инвентарь: 0 pycache/pyc, wagtail_api.py + 24 locale-файла ===
+проверяемый пакет (wheel): /opt/MyApps/wagtail/d67-release-audit/clean-wdp-venv/lib/python3.14/site-packages/wagtail_desktop_publisher/__init__.py
+Found 71 test(s).
+Creating test database for alias 'default'...
+System check identified no issues (0 silenced).
+  ⬆️ загружено: same.png → id 300 (2026/dup)
+....= без изменений, синхронизация не требуется (id 555)
+..  ⬆️ загружено: images/logo.png → id 201 (2026/ref)
+.  ⬆️ загружено: images/logo.png → id 201 (2026/ref)
+...  ⬆️ загружено: images/logo.png → id 201 (2026/ref)
+............................................................  ⬆️ загружено: one/img.png → id 101 (2026/t)
+  ⬆️ загружено: two/img.png → id 102 (2026/t)
+.
+----------------------------------------------------------------------
+Ran 71 tests in 3.991s
+
+OK
+Destroying test database for alias 'default'...
+=== EXIT=0 ===
