@@ -1,0 +1,32 @@
+### Пометка агента — команды (не часть stdout):
+### Сборка: python -m build --outdir /tmp/wdp_build5 . (HEAD bdd643a969a8b622b7ed93f75d87d659edc2f8ed)
+### Установка: pip install --no-cache-dir --force-reinstall --no-deps <wheel> (+ пины Django==6.0.9 Wagtail==8.1.0)
+### Запуск: PYTHONUNBUFFERED=1 <clean-wdp-venv>/bin/python tests/runtests.py (sqlite :memory:, tmp MEDIA_ROOT)
+### Инвентарь ОБОИХ артефактов: wheel — 0 pycache/pyc, wagtail_api.py + 24 locale-файла; sdist — 0 pycache/pyc, wagtail_api.py присутствует
+=== FINAL WHEEL SUITE (Issue #7): HEAD bdd643a969a8b622b7ed93f75d87d659edc2f8ed / wheel SHA256 de28e9aaf23d8ff0847e7035cc6d61e6a13d37791343736a719a44c8ad60a2f6 / sdist SHA256 5de0d5e1fab79fe41fb0a3f22db220ae5786864bc2c1706da7317a124107a9b2 / Python Python 3.14.4 / Django 6.0.9 / Wagtail (8, 1, 0, 'final', 1) / SQLite (:memory:, tmp MEDIA_ROOT) ===
+=== Артефакт-инвентарь ОБОИХ: wheel — 0 pycache/pyc, wagtail_api.py + 24 locale-файла; sdist — 0 pycache/pyc, wagtail_api.py присутствует ===
+=== Issue #7: единый source-of-truth тела (raw скан/hash/подстановка/рендер), save без дрейфа тела, сканер с учётом прерывания абзацев ===
+проверяемый пакет (wheel): /opt/MyApps/wagtail/d67-release-audit/clean-wdp-venv/lib/python3.14/site-packages/wagtail_desktop_publisher/__init__.py
+Found 79 test(s).
+Creating test database for alias 'default'...
+System check identified no issues (0 silenced).
+  ⬆️ загружено: same.png → id 300 (2026/dup)
+....= без изменений, синхронизация не требуется (id 555)
+..  ⬆️ загружено: images/logo.png → id 201 (2026/ref)
+.  ⬆️ загружено: images/logo.png → id 201 (2026/ref)
+...  ⬆️ загружено: images/logo.png → id 201 (2026/ref)
+........  ⬆️ загружено: photo.png → id 500 (2026/t)
+.  ⬆️ загружено: real.png → id 600 (2026/t)
+.  ⬆️ загружено: real.png → id 600 (2026/t)
+..  ⬆️ загружено: photo.png → id 400 (2026/sample)
+= без изменений, синхронизация не требуется (id 601)
+.  ⬆️ загружено: photo.png → id 400 (2026/sample)
+.......................................................  ⬆️ загружено: one/img.png → id 101 (2026/t)
+  ⬆️ загружено: two/img.png → id 102 (2026/t)
+.
+----------------------------------------------------------------------
+Ran 79 tests in 2.744s
+
+OK
+Destroying test database for alias 'default'...
+=== EXIT=0 ===
